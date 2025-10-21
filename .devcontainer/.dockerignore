@@ -1,0 +1,14 @@
+# Don't copy these into Docker image (saves build time)
+.git
+.vscode
+*.log
+*.data
+*.dump
+*.restart
+*.xyz
+*.png
+*.pdf
+__pycache__
+*.pyc
+.DS_Store
+.env

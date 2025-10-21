@@ -1,0 +1,60 @@
+{
+  "name": "NiTi LAMMPS Environment",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "args": {
+      "USERNAME": "rimuru",
+      "USER_UID": "1000",
+      "USER_GID": "1000"
+    }
+  },
+  
+  "runArgs": [
+    "--ipc=host",
+    "--shm-size=2g"
+  ],
+  
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/home/rimuru/workspace,type=bind,consistency=cached"
+  ],
+  
+  "workspaceFolder": "/home/rimuru/workspace",
+  
+  "forwardPorts": [8888, 8080],
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "yzhang.markdown-all-in-one",
+        "thfriedrich.lammps",
+        "eamodio.gitlens",
+        "redhat.vscode-yaml",
+        "mechatroner.rainbow-csv"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.linting.enabled": true,
+        "python.formatting.provider": "black",
+        "editor.formatOnSave": true,
+        "files.autoSave": "afterDelay",
+        "files.autoSaveDelay": 5000
+      }
+    }
+  },
+  
+  "remoteUser": "rimuru",
+  
+  "postCreateCommand": "bash -c 'echo \"Container ready! LAMMPS version:\" && lammps -help | head -5 && echo \"\" && echo \"Python packages:\" && pip3 list | grep -E \"numpy|scipy|ovito|ase\" && echo \"\" && echo \"Workspace: $(pwd)\"'",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "installOhMyZsh": false
+    }
+  }
+}
