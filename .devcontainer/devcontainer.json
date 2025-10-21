@@ -1,7 +1,7 @@
 {
   "name": "NiTi LAMMPS Environment",
   "build": {
-    "dockerfile": "../Dockerfile",
+    "dockerfile": "../.devcontainer/Dockerfile",
     "context": "..",
     "args": {
       "USERNAME": "rimuru",
