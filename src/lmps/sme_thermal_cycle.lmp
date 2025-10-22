@@ -1,0 +1,90 @@
+variable        input_data string
+variable        output_dir string
+variable        seed equal 12345
+
+clear
+units           metal
+dimension       3
+boundary        f f f
+atom_style      atomic
+
+read_data       ${input_data}
+
+pair_style      meam
+pair_coeff      * * /home/rimuru/workspace/potentials/library.meam Ni Ti /home/rimuru/workspace/potentials/niti.meam Ni Ti
+
+neighbor        2.0 bin
+neigh_modify    delay 5 every 1
+
+compute         pe_atom all pe/atom
+compute         ke_atom all ke/atom
+compute         stress_atom all stress/atom NULL
+compute         centro all centro/atom bcc
+
+timestep        0.001
+
+variable        T_low equal 50.0
+variable        T_high equal 400.0
+variable        T_rate equal 0.0005
+variable        temp_diff equal (v_T_high-v_T_low)
+variable        steps_ramp equal round(v_temp_diff/v_T_rate)
+variable        equil_steps equal 50000
+
+shell           mkdir -p ${output_dir}
+
+thermo          1000
+thermo_style    custom step temp pe ke etotal press vol lx ly lz density pxx pyy pzz
+
+dump            1 all custom 2000 ${output_dir}/thermal_*.dump id type x y z c_pe_atom c_ke_atom c_centro
+dump_modify     1 sort id
+
+fix             thermo_out all print 100 "$(step) $(temp) $(pe) $(ke) $(etotal) $(press) $(vol) $(lx) $(ly) $(lz)" &
+                file ${output_dir}/thermo_detailed.txt screen no title "# step temp pe ke etotal press vol lx ly lz"
+
+velocity        all create ${T_low} ${seed} dist gaussian
+fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+write_restart   ${output_dir}/equil_low.restart
+
+fix             1 all nvt temp ${T_low} ${T_high} $(100.0*dt)
+run             ${steps_ramp}
+unfix           1
+
+fix             1 all nvt temp ${T_high} ${T_high} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+write_restart   ${output_dir}/equil_high.restart
+
+fix             1 all nvt temp ${T_high} ${T_low} $(100.0*dt)
+run             ${steps_ramp}
+unfix           1
+
+fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+
+fix             1 all nvt temp ${T_low} ${T_high} $(100.0*dt)
+run             ${steps_ramp}
+unfix           1
+
+fix             1 all nvt temp ${T_high} ${T_high} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+
+fix             1 all nvt temp ${T_high} ${T_low} $(100.0*dt)
+run             ${steps_ramp}
+unfix           1
+
+fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+
+write_data      ${output_dir}/final.data
+write_restart   ${output_dir}/final.restart
+
+undump          1
+unfix           thermo_out
+
+variable        total_time equal step*dt
+print           "SME COMPLETE: ${total_time} ps, Range ${T_low}-${T_high} K, 2 cycles"

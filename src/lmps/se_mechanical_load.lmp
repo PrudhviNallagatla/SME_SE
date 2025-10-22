@@ -1,0 +1,87 @@
+variable        input_data string
+variable        output_dir string
+variable        seed equal 12345
+
+clear
+units           metal
+dimension       3
+boundary        f f f
+atom_style      atomic
+
+read_data       ${input_data}
+
+pair_style      meam
+pair_coeff      * * /home/rimuru/workspace/potentials/library.meam Ni Ti /home/rimuru/workspace/potentials/niti.meam Ni Ti
+
+neighbor        2.0 bin
+neigh_modify    delay 5 every 1
+
+compute         pe_atom all pe/atom
+compute         ke_atom all ke/atom
+compute         stress_atom all stress/atom NULL
+compute         centro all centro/atom bcc
+
+timestep        0.001
+
+variable        test_temp equal 300.0
+variable        strain_rate equal 1.0e-5
+variable        max_strain equal 0.08
+variable        strain_steps equal round(v_max_strain/v_strain_rate)
+variable        equil_steps equal 50000
+
+shell           mkdir -p ${output_dir}
+
+thermo          1000
+thermo_style    custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
+
+dump            1 all custom 1000 ${output_dir}/tensile_*.dump id type x y z c_pe_atom c_ke_atom c_centro
+dump_modify     1 sort id
+
+fix             stress_out all print 50 "$(step) $(temp) $(pe) $(press) $(pxx) $(pyy) $(pzz) $(lx) $(ly) $(lz)" &
+                file ${output_dir}/stress_strain.txt screen no title "# step temp pe press pxx pyy pzz lx ly lz"
+
+velocity        all create ${test_temp} ${seed} dist gaussian
+fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+write_restart   ${output_dir}/equil_pre.restart
+
+variable        Lx_ref equal lx
+variable        Ly_ref equal ly
+variable        Lz_ref equal lz
+
+fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
+fix             2 all deform 1 x erate ${strain_rate} remap x
+run             ${strain_steps}
+unfix           2
+unfix           1
+
+variable        Lx_max equal lx
+variable        strain_applied equal (v_Lx_max-v_Lx_ref)/v_Lx_ref
+write_restart   ${output_dir}/max_strain.restart
+
+fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+
+fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
+fix             2 all deform 1 x erate $(-v_strain_rate) remap x
+run             ${strain_steps}
+unfix           2
+unfix           1
+
+fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
+run             ${equil_steps}
+unfix           1
+
+variable        Lx_final equal lx
+variable        residual_strain equal (v_Lx_final-v_Lx_ref)/v_Lx_ref
+variable        recovery_pct equal (v_strain_applied-v_residual_strain)/v_strain_applied*100
+
+write_data      ${output_dir}/final.data
+write_restart   ${output_dir}/final.restart
+
+undump          1
+unfix           stress_out
+
+print           "SE COMPLETE: Applied=$(v_strain_applied), Residual=$(v_residual_strain), Recovery=$(v_recovery_pct)%"
