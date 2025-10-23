@@ -63,8 +63,7 @@ sudo apt-get install -y --no-install-recommends \
     libhdf5-dev \
     libnetcdf-dev \
     zlib1g-dev \
-    libgsl-dev \
-    libvtk9-dev
+    libgsl-dev
 
 # Install Python packages
 echo ""
@@ -98,7 +97,7 @@ fi
 git clone --depth 1 --branch stable_2Aug2023_update3 https://github.com/lammps/lammps.git
 cd lammps
 
-# Build LAMMPS with ALL packages
+# Build LAMMPS with ALL packages (except VTK)
 echo ""
 echo "[5/6] Compiling LAMMPS with ALL packages (this will take 15-30 minutes)..."
 mkdir -p build
@@ -155,8 +154,7 @@ cmake ../cmake \
     -D PKG_OPENMP=yes \
     -D PKG_PTM=yes \
     -D PKG_QTB=yes \
-    -D PKG_TALLY=yes \
-    -D PKG_VTK=yes
+    -D PKG_TALLY=yes
 
 echo ""
 echo "Building with ${NPROC} parallel jobs..."
