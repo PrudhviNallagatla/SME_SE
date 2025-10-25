@@ -7,12 +7,12 @@ set -euo pipefail
 # CONFIGURATION
 # ============================================
 DATA_FILES=(
-    "data/structures/niti_10nm_Ni50_crystalline_1grain.data"
-    "data/structures/niti_10nm_Ni50_amorphous.data"
-    "data/structures/niti_20nm_Ni50_crystalline_1grain.data"
-    "data/structures/niti_20nm_Ni50_amorphous.data"
-    "data/structures/niti_30nm_Ni50_crystalline_1grain.data"
-    "data/structures/niti_30nm_Ni50_amorphous.data"
+    "/home/rimuru/workspace/data/structures/niti_2nm_Ni50_amorphous.data"
+    # "data/structures/niti_10nm_Ni50_amorphous.data"
+    # "data/structures/niti_20nm_Ni50_crystalline_1grain.data"
+    # "data/structures/niti_20nm_Ni50_amorphous.data"
+    # "data/structures/niti_30nm_Ni50_crystalline_1grain.data"
+    # "data/structures/niti_30nm_Ni50_amorphous.data"
 )
 
 PROJECT_ROOT="/home/rimuru/workspace"
@@ -20,8 +20,8 @@ LAMMPS_BIN="/usr/local/bin/lmp"
 SEED=42
 
 # FIXED: Define potential paths as variables
-POT_LIB="${PROJECT_ROOT}/potentials/library.meam"
-POT_FILE="${PROJECT_ROOT}/potentials/niti.meam"
+POT_LIB="/home/rimuru/workspace/potentials/library.meam"
+POT_FILE="/home/rimuru/workspace/potentials/NiTi.meam"
 
 TOTAL_CORES=$(nproc)
 TOTAL_MEM_GB=$(awk '/MemTotal/ {printf "%.0f\n", $2/1024/1024}' /proc/meminfo)
@@ -73,7 +73,7 @@ get_atom_count() {
     local datafile=$1
     [[ ! -f "${datafile}" ]] && echo "0" && return
     local count
-    count=$(grep -m1 "atoms" "${datafile}" 2>/null | awk '{print $1}')
+    count=$(grep -m1 "atoms" "${datafile}" 2>/dev/null | awk '{print $1}')
     echo "${count:-0}"
 }
 
@@ -171,7 +171,7 @@ for datafile in "${DATA_FILES[@]}"; do
         -var pot_lib "${POT_LIB}" \
         -var pot_file "${POT_FILE}" \
         -in src/lmps/minimize.lmp \
-        > "${logfile}" 2>&1
+        2>&1 | tee "${logfile}"
     
     # Check if the job was successful
     if [[ -f "${output_check}" ]]; then
@@ -230,7 +230,7 @@ for datafile in "${DATA_FILES[@]}"; do
         -var pot_lib "${POT_LIB}" \
         -var pot_file "${POT_FILE}" \
         -in src/lmps/se_mechanical_load.lmp \
-        > "${logfile}" 2>&1
+        2>&1 | tee "${logfile}"
         
     # Check if the job was successful
     if [[ -f "${output_check_1}" || -f "${output_check_2}" ]]; then
@@ -262,6 +262,6 @@ for datafile in "${DATA_FILES[@]}"; do
     fi
 done
 echo ""
-echo "Output: data/raw_output/<structure>/{minimize,se}/"
+echo "Output: data/raw_output/${structure_name}/{minimize,se}/"
 echo "Logs: logs/"
 echo "=========================================="
