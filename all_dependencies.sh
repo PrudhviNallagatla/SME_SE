@@ -36,7 +36,8 @@ sudo apt-get install -y --no-install-recommends \
     curl \
     vim \
     nano \
-    htop \
+    btop \
+    ncdu \
     tmux \
     tree \
     unzip \
@@ -83,6 +84,9 @@ pip3 install --no-cache-dir \
     pyyaml \
     h5py \
     seaborn \
+    plotly \
+    bokeh \
+    networkx \
     scikit-learn \
     MDAnalysis \
     pymatgen

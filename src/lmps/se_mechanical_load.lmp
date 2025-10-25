@@ -1,87 +1,176 @@
-variable        input_data string
-variable        output_dir string
-variable        seed equal 12345
+# Superelastic mechanical testing for NiTi nanostructures
+# CORRECTED SCRIPT
+
+variable input_data string data.amorphous_2nm
+variable output_dir string output_test
+variable seed equal 12345
+
+# FIXED: Added variables for portable potential paths
+variable pot_lib string "/home/rimuru/workspace/potentials/library.meam"
+variable pot_file string "/home/rimuru/workspace/potentials/niti.meam"
 
 clear
-units           metal
-dimension       3
-boundary        f f f
-atom_style      atomic
+units metal
+dimension 3
+boundary s s s
+atom_style atomic
 
-read_data       ${input_data}
+read_data ${input_data}
 
-pair_style      meam
-pair_coeff      * * /home/rimuru/workspace/potentials/library.meam Ni Ti /home/rimuru/workspace/potentials/niti.meam Ni Ti
+# MEAM potential for NiTi
+pair_style meam
+# FIXED: Use variables for portable potential paths
+pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
-neighbor        2.0 bin
-neigh_modify    delay 5 every 1
+neighbor 2.0 bin
+neigh_modify delay 0 every 1 check yes
 
-compute         pe_atom all pe/atom
-compute         ke_atom all ke/atom
-compute         stress_atom all stress/atom NULL
-compute         centro all centro/atom bcc
+# Compute per-atom properties
+compute pe_atom all pe/atom
+compute ke_atom all ke/atom
+compute stress_atom all stress/atom NULL
+compute centro all centro/atom bcc
+compute cna all cna/atom 3.5
 
-timestep        0.001
+timestep 0.001   # 1 fs
 
-variable        test_temp equal 300.0
-variable        strain_rate equal 1.0e-5
-variable        max_strain equal 0.08
-variable        strain_steps equal round(v_max_strain/v_strain_rate)
-variable        equil_steps equal 50000
+# Test parameters
+variable test_temp equal 300.0
+variable strain_rate equal 1.0e-3
+variable max_strain equal 0.08
+variable equil_steps equal 50000
 
-shell           mkdir -p ${output_dir}
+# Corrected strain step calculation
+variable loading_time equal v_max_strain/v_strain_rate
+# CRITICAL FIX: Use the built-in 'dt' variable, not 'v_timestep'
+variable strain_steps equal round(v_loading_time/dt)
 
-thermo          1000
-thermo_style    custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
+# Thermostat/Barostat damping
+variable tdamp equal $(100.0*dt)
+variable pdamp equal $(1000.0*dt)
 
-dump            1 all custom 1000 ${output_dir}/tensile_*.dump id type x y z c_pe_atom c_ke_atom c_centro
-dump_modify     1 sort id
+shell mkdir -p ${output_dir}
 
-fix             stress_out all print 50 "$(step) $(temp) $(pe) $(press) $(pxx) $(pyy) $(pzz) $(lx) $(ly) $(lz)" &
-                file ${output_dir}/stress_strain.txt screen no title "# step temp pe press pxx pyy pzz lx ly lz"
+thermo 1000
+thermo_style custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
 
-velocity        all create ${test_temp} ${seed} dist gaussian
-fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-write_restart   ${output_dir}/equil_pre.restart
+# Dump trajectory
+dump 1 all custom 1000 ${output_dir}/tensile_*.dump \
+    id type x y z c_pe_atom c_ke_atom c_centro c_cna \
+    c_stress_atom[1] c_stress_atom[2] c_stress_atom[3]
+dump_modify 1 sort id
 
-variable        Lx_ref equal lx
-variable        Ly_ref equal ly
-variable        Lz_ref equal lz
+# ============================================
+# Initial Equilibration
+# ============================================
+print "=========================================="
+print "Equilibrating at ${test_temp} K..."
+print "=========================================="
 
-fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
-fix             2 all deform 1 x erate ${strain_rate} remap x
-run             ${strain_steps}
-unfix           2
-unfix           1
+velocity all create ${test_temp} ${seed} dist gaussian
+fix 1 all nvt temp ${test_temp} ${test_temp} ${tdamp}
+run ${equil_steps}
+unfix 1
 
-variable        Lx_max equal lx
-variable        strain_applied equal (v_Lx_max-v_Lx_ref)/v_Lx_ref
-write_restart   ${output_dir}/max_strain.restart
+write_restart ${output_dir}/equil_pre.restart
 
-fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
+variable Lx_ref equal lx
+variable Ly_ref equal ly
+variable Lz_ref equal lz
 
-fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
-fix             2 all deform 1 x erate $(-v_strain_rate) remap x
-run             ${strain_steps}
-unfix           2
-unfix           1
+print "Reference box: Lx=$(v_Lx_ref) Ly=$(v_Ly_ref) Lz=$(v_Lz_ref) Å"
 
-fix             1 all nvt temp ${test_temp} ${test_temp} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
+# ============================================
+# Define strain and stress variables for output
+# ============================================
+variable strain_x equal (lx-v_Lx_ref)/v_Lx_ref
+variable strain_y equal (ly-v_Ly_ref)/v_Ly_ref
+variable strain_z equal (lz-v_Lz_ref)/v_Lz_ref
+variable stress_x equal -pxx/10000
+variable stress_y equal -pyy/10000
+variable stress_z equal -pzz/10000
 
-variable        Lx_final equal lx
-variable        residual_strain equal (v_Lx_final-v_Lx_ref)/v_Lx_ref
-variable        recovery_pct equal (v_strain_applied-v_residual_strain)/v_strain_applied*100
+fix stress_out all print 50 \
+    "$(step) $(temp) $(pe) $(v_strain_x) $(v_strain_y) $(v_strain_z) $(v_stress_x) $(v_stress_y) $(v_stress_z)" \
+    file ${output_dir}/stress_strain.txt screen no \
+    title "# step temp pe strain_x strain_y strain_z stress_x(GPa) stress_y(GPa) stress_z(GPa)"
 
-write_data      ${output_dir}/final.data
-write_restart   ${output_dir}/final.restart
+# ============================================
+# Loading Phase (Tensile deformation)
+# ============================================
+print "=========================================="
+print "Loading phase: tensile strain along x-axis"
+print "Strain rate: ${strain_rate} /ps for ${loading_time} ps"
+print "Total steps: ${strain_steps}"
+print "=========================================="
 
-undump          1
-unfix           stress_out
+fix 1 all npt temp ${test_temp} ${test_temp} ${tdamp} y 0.0 0.0 ${pdamp} z 0.0 0.0 ${pdamp}
+fix 2 all deform 1 x erate ${strain_rate} remap x
+run ${strain_steps}
+unfix 2
+unfix 1
 
-print           "SE COMPLETE: Applied=$(v_strain_applied), Residual=$(v_residual_strain), Recovery=$(v_recovery_pct)%"
+variable Lx_max equal lx
+variable strain_applied equal (v_Lx_max-v_Lx_ref)/v_Lx_ref
+
+print "Max strain reached: $(v_strain_applied*100)%"
+write_restart ${output_dir}/max_strain.restart
+
+# ============================================
+# Hold at Maximum Strain
+# ============================================
+print "Equilibrating at maximum strain..."
+
+fix 1 all npt temp ${test_temp} ${test_temp} ${tdamp} y 0.0 0.0 ${pdamp} z 0.0 0.0 ${pdamp}
+run ${equil_steps}
+unfix 1
+
+# ============================================
+# Unloading Phase (Reverse deformation)
+# ============================================
+print "=========================================="
+print "Unloading phase: releasing tensile strain"
+print "=========================================="
+
+fix 1 all npt temp ${test_temp} ${test_temp} ${tdamp} y 0.0 0.0 ${pdamp} z 0.0 0.0 ${pdamp}
+fix 2 all deform 1 x erate $(-v_strain_rate) remap x
+run ${strain_steps}
+unfix 2
+unfix 1
+
+# ============================================
+# Final Equilibration
+# ============================================
+print "Final equilibration after unloading..."
+
+fix 1 all npt temp ${test_temp} ${test_temp} ${tdamp} y 0.0 0.0 ${pdamp} z 0.0 0.0 ${pdamp}
+run ${equil_steps}
+unfix 1
+
+# ============================================
+# Calculate Recovery Metrics
+# ============================================
+variable Lx_final equal lx
+variable residual_strain equal (v_Lx_final-v_Lx_ref)/v_Lx_ref
+variable recovery_pct equal (v_strain_applied-v_residual_strain)/v_strain_applied*100
+
+write_data ${output_dir}/final.data
+write_restart ${output_dir}/final.restart
+
+undump 1
+unfix stress_out
+
+# ============================================
+# Summary
+# ============================================
+print "=========================================="
+print "SUPERELASTIC TEST COMPLETE"
+print "=========================================="
+print "Applied strain:   $(v_strain_applied) ($(v_strain_applied*100)%)"
+print "Residual strain:  $(v_residual_strain) ($(v_residual_strain*100)%)"
+print "Shape recovery:   $(v_recovery_pct)%"
+print "=========================================="
+print "Reference length: $(v_Lx_ref) Å"
+print "Max length:       $(v_Lx_max) Å"
+print "Final length:     $(v_Lx_final) Å"
+print "=========================================="

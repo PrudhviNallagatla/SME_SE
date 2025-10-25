@@ -1,0 +1,325 @@
+LAMMPS (2 Aug 2023 - Update 3)
+  using 1 OpenMP thread(s) per MPI task
+  using 1 OpenMP thread(s) per MPI task
+Reading data file ...
+  orthogonal box = (-10.020352 -8.9727131 -10.136973) to (10.483959 9.1931772 9.9361793)
+  2 by 1 by 1 MPI processor grid
+  reading atoms ...
+  318 atoms
+  reading velocities ...
+  318 velocities
+  read_data CPU = 0.028 seconds
+WARNING: Detected non-ASCII characters in input. Will try to continue by replacing with ASCII equivalents where known. (src/input.cpp:463)
+=== SME STEP 1: Equilibrating at 400 K (Austenite) ===
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 7
+  ghost atom cutoff = 7
+  binsize = 3.5, bins = 6 6 6
+  4 neighbor lists, perpetual/occasional/extra = 2 2 0
+  (1) pair meam, perpetual
+      attributes: full, newton on
+      pair build: full/bin/atomonly
+      stencil: full/bin/3d
+      bin: standard
+  (2) pair meam, perpetual, half/full from (1)
+      attributes: half, newton on
+      pair build: halffull/newton
+      stencil: none
+      bin: none
+  (3) compute centro/atom, occasional, copy from (1)
+      attributes: full, newton on
+      pair build: copy
+      stencil: none
+      bin: none
+  (4) compute cna/atom, occasional, copy from (1)
+      attributes: full, newton on
+      pair build: copy
+      stencil: none
+      bin: none
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 0
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 8.777 | 8.785 | 8.794 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+         0   400           -1476.9032      16.390186     -1460.513       2337.0384      7474.7674      20.502712      18.163823      20.071467      2552.1943      2013.1111      2445.8097    
+       100   206.01524     -1467.442       8.4415704     -1459.0004     -6407.3854      7474.7674      20.502712      18.163823      20.071467     -5274.6254     -7524.6354     -6422.8955    
+Loop time of 0.680213 on 2 procs for 100 steps with 318 atoms
+
+Performance: 12.702 ns/day, 1.889 hours/ns, 147.013 timesteps/s, 46.750 katom-step/s
+104.5% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.62267    | 0.63019    | 0.63772    |   0.9 | 92.65
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.036009   | 0.043637   | 0.051264   |   3.7 |  6.42
+Output  | 8.3829e-05 | 0.00023266 | 0.00038149 |   0.0 |  0.03
+Modify  | 0.0036024  | 0.0038102  | 0.004018   |   0.3 |  0.56
+Other   |            | 0.002341   |            |       |  0.34
+
+Nlocal:            159 ave         169 max         149 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:            130 ave         139 max         121 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:         5196.5 ave        5555 max        4838 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10393 ave       11128 max        9658 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20786
+Ave neighs/atom = 65.36478
+Neighbor list builds = 0
+Dangerous builds = 0
+Original Austenite Length (Lx_ref): 20.502711650097701579 A
+System init for write_restart ...
+=== SME STEP 1: Cooling to 50 K (A -> M) ===
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 100
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.12 | 12.13 | 12.14 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+       100   206.01524     -1467.442       8.4415704     -1459.0004     -6141.2895      7798.6416      20.807691      18.367453      20.405448     -5055.5724     -7212.1406     -6156.1554    
+       450   193.77828     -1469.0465      7.9401553     -1461.1064     -2469.3243      7798.6416      20.807691      18.367453      20.405448     -1219.8138     -3987.7854     -2200.3738    
+Loop time of 1.81111 on 2 procs for 350 steps with 318 atoms
+
+Performance: 16.697 ns/day, 1.437 hours/ns, 193.252 timesteps/s, 61.454 katom-step/s
+103.8% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 1.7172     | 1.7182     | 1.7192     |   0.1 | 94.87
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.066908   | 0.067397   | 0.067886   |   0.2 |  3.72
+Output  | 4.2249e-05 | 7.0017e-05 | 9.7785e-05 |   0.0 |  0.00
+Modify  | 0.0086156  | 0.014167   | 0.019719   |   4.7 |  0.78
+Other   |            | 0.0113     |            |       |  0.62
+
+Nlocal:            159 ave         166 max         152 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:            131 ave         138 max         124 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:           5111 ave        5359 max        4863 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10222 ave       10752 max        9692 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20444
+Ave neighs/atom = 64.289308
+Neighbor list builds = 0
+Dangerous builds = 0
+=== SME STEP 1: Equilibrating at 50 K (Martensite) ===
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 450
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.13 | 12.13 | 12.14 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+       450   193.77828     -1469.0465      7.9401553     -1461.1064     -2527.6443      7618.7046      20.791976      18.019064      20.33542      -1248.6231     -4081.9681     -2252.3418    
+       550   133.1534      -1470.8086      5.4560225     -1465.3526     -5122.6138      7618.7046      20.791976      18.019064      20.33542      -4911.2758     -5497.5105     -4959.0551    
+Loop time of 0.590097 on 2 procs for 100 steps with 318 atoms
+
+Performance: 14.642 ns/day, 1.639 hours/ns, 169.464 timesteps/s, 53.889 katom-step/s
+103.5% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.55171    | 0.55745    | 0.56319    |   0.8 | 94.47
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.02348    | 0.029095   | 0.034709   |   3.3 |  4.93
+Output  | 3.8617e-05 | 7.7568e-05 | 0.00011652 |   0.0 |  0.01
+Modify  | 0.0020935  | 0.0023368  | 0.0025802  |   0.5 |  0.40
+Other   |            | 0.001141   |            |       |  0.19
+
+Nlocal:            159 ave         164 max         154 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:            130 ave         134 max         126 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:         5131.5 ave        5262 max        5001 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10263 ave       10522 max       10004 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20526
+Ave neighs/atom = 64.54717
+Neighbor list builds = 0
+Dangerous builds = 0
+System init for write_restart ...
+=== SME STEP 2: Deforming Martensite at 50 K ===
+Martensite Length before deform: 20.877353026424998461 A
+5 atoms in group anchor
+4 atoms in group pull
+309 atoms in group mobile
+Deforming particle: 5 anchor atoms, 4 pull atoms.
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 550
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.51 | 12.51 | 12.52 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+       550   133.1534      -1470.8086      5.4560225     -1465.3526     -5150.2523      7577.8193      20.877353      17.961879      20.207707     -4937.7741     -5527.1717     -4985.8111    
+      1000   55.920689     -1473.3724      2.2913763     -1471.0811     -1718.8189      7577.8193      20.877353      17.961879      20.207707     -5352.2802      19.553634      176.26984    
+      1350   55.775107     -1472.5588      2.285411      -1470.2734     -3005.9228      7791.9931      21.877378      17.808159      20.000196     -9220.4242      309.9482      -107.29252    
+Loop time of 4.1877 on 2 procs for 800 steps with 318 atoms
+
+Performance: 16.505 ns/day, 1.454 hours/ns, 191.036 timesteps/s, 60.749 katom-step/s
+104.1% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 3.9507     | 3.9619     | 3.9731     |   0.6 | 94.61
+Neigh   | 0.00043731 | 0.00045289 | 0.00046847 |   0.0 |  0.01
+Comm    | 0.18814    | 0.19935    | 0.21055    |   2.5 |  4.76
+Output  | 0.00017155 | 0.00031463 | 0.00045772 |   0.0 |  0.01
+Modify  | 0.017091   | 0.017638   | 0.018185   |   0.4 |  0.42
+Other   |            | 0.008051   |            |       |  0.19
+
+Nlocal:            159 ave         177 max         141 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:            130 ave         147 max         113 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:         5149.5 ave        5778 max        4521 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10299 ave       11628 max        8970 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20598
+Ave neighs/atom = 64.773585
+Neighbor list builds = 1
+Dangerous builds = 0
+System init for write_restart ...
+=== SME STEP 3: Unloading and relaxing at 50 K ===
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 1350
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.13 | 12.14 | 12.15 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+      1350   55.775107     -1472.5588      2.285411      -1470.2734     -2989.0927      7835.8662      22.547541      17.713123      19.619714     -9168.799       308.2128      -106.69178    
+      1450   69.907509     -1473.5882      2.8644927     -1470.7237      576.70195      7835.8662      22.547541      17.713123      19.619714     -4653.403       3343.4558      3040.0531    
+Loop time of 0.465095 on 2 procs for 100 steps with 318 atoms
+
+Performance: 18.577 ns/day, 1.292 hours/ns, 215.010 timesteps/s, 68.373 katom-step/s
+104.7% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.41099    | 0.43645    | 0.4619     |   3.9 | 93.84
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.0012281  | 0.026627   | 0.052027   |  15.6 |  5.73
+Output  | 4.0568e-05 | 5.8848e-05 | 7.7127e-05 |   0.0 |  0.01
+Modify  | 0.0011022  | 0.0013063  | 0.0015104  |   0.6 |  0.28
+Other   |            | 0.0006571  |            |       |  0.14
+
+Nlocal:            159 ave         179 max         139 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:          128.5 ave         146 max         111 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:         5107.5 ave        5809 max        4406 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10215 ave       11704 max        8726 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20430
+Ave neighs/atom = 64.245283
+Neighbor list builds = 0
+Dangerous builds = 0
+Residual deformed length (Lx_residual): 22.547541268538999759 A
+Residual Strain: 0 %
+System init for write_restart ...
+=== SME STEP 4: Heating to 400 K (Recovery) ===
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 1450
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.13 | 12.14 | 12.15 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+      1450   69.907509     -1473.5882      2.8644927     -1470.7237      585.71205      7715.3259      22.280605      17.684045      19.581488     -4726.1054      3395.6922      3087.5493    
+      1800   156.64322     -1472.513       6.4185288     -1466.0944      1798.6853      7283.5105      21.526511      17.647561      19.172661      1317.5042      2069.8459      2008.7057    
+Loop time of 1.54523 on 2 procs for 350 steps with 318 atoms
+
+Performance: 19.570 ns/day, 1.226 hours/ns, 226.503 timesteps/s, 72.028 katom-step/s
+104.1% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 1.4126     | 1.4733     | 1.5341     |   5.0 | 95.35
+Neigh   | 0.000338   | 0.0003517  | 0.0003654  |   0.0 |  0.02
+Comm    | 0.0048858  | 0.065518   | 0.12615    |  23.7 |  4.24
+Output  | 5.25e-05   | 0.00023854 | 0.00042458 |   0.0 |  0.02
+Modify  | 0.0032032  | 0.0039827  | 0.0047622  |   1.2 |  0.26
+Other   |            | 0.001799   |            |       |  0.12
+
+Nlocal:            159 ave         167 max         151 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:            130 ave         137 max         123 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:           5133 ave        5374 max        4892 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10266 ave       10755 max        9777 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20532
+Ave neighs/atom = 64.566038
+Neighbor list builds = 1
+Dangerous builds = 0
+=== SME STEP 5: Holding at 400 K to stabilize recovery ===
+Setting up Verlet run ...
+  Unit style    : metal
+  Current step  : 1800
+  Time step     : 0.001
+Per MPI rank memory allocation (min/avg/max) = 12.13 | 12.14 | 12.15 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press          Volume           Lx             Ly             Lz            Pxx            Pyy            Pzz      
+      1800   156.64322     -1472.513       6.4185288     -1466.0944      1769.5064      7403.6144      21.368934      17.802283      19.461901      1296.1312      2036.2681      1976.1198    
+      1900   190.78743     -1472.0816      7.8176039     -1464.264       5505.7842      7403.6144      21.368934      17.802283      19.461901      6623.7136      4796.8655      5096.7736    
+Loop time of 0.411877 on 2 procs for 100 steps with 318 atoms
+
+Performance: 20.977 ns/day, 1.144 hours/ns, 242.791 timesteps/s, 77.207 katom-step/s
+104.2% CPU use with 2 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.40106    | 0.40434    | 0.40761    |   0.5 | 98.17
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.0024559  | 0.0057141  | 0.0089723  |   4.3 |  1.39
+Output  | 6.9969e-05 | 0.00024322 | 0.00041647 |   0.0 |  0.06
+Modify  | 0.0009429  | 0.0011749  | 0.0014069  |   0.7 |  0.29
+Other   |            | 0.0004097  |            |       |  0.10
+
+Nlocal:            159 ave         160 max         158 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Nghost:          131.5 ave         132 max         131 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+Neighs:           5171 ave        5288 max        5054 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+FullNghs:        10342 ave       10579 max       10105 min
+Histogram: 1 0 0 0 0 0 0 0 0 1
+
+Total # of neighbors = 20684
+Ave neighs/atom = 65.044025
+Neighbor list builds = 0
+Dangerous builds = 0
+Final recovered length (Lx_final): 21.368933653692700148 A
+System init for write_restart ...
+==========================================
+SME SIMULATION COMPLETE
+==========================================
+Original Austenite Length:   21.162248663976299667 A
+Deformed Martensite Length: 21.162248663976299667 A
+Final Recovered Length:     21.162248663976299667 A
+------------------------------------------
+Residual Strain (after deform): 0 %
+Final Strain (after heating):   0 %
+Shape Recovery:               100 %
+==========================================
+Total wall time: 0:00:09

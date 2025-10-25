@@ -5,6 +5,13 @@ set -euo pipefail
 PROJECT_ROOT="/home/rimuru/workspace"
 SEED=42
 
+SIZE=2           # Diameter in nm
+SHAPE="blob"      # sphere, blob, or ellipsoid
+# either grains or amorphous only - dont use both
+GRAINS=0          # 0 = single crystal, >1 = polycrystalline
+AMORPHOUS=0.3     # 0.0 = crystalline, 0.3 = amorphous
+NI_PERCENT=50.0   # Ni percentage
+
 # ============================================
 # CONFIGURATION - Edit these variables
 # ============================================
@@ -15,29 +22,23 @@ SEED=42
 # NI_PERCENT: Nickel percentage (50.0 = equiatomic NiTi)
 # ============================================
 
-SIZE=10           # Diameter in nm
-SHAPE="blob"      # sphere, blob, or ellipsoid
-# either grains or amorphous only - dont use both
-GRAINS=0          # 0 = single crystal, >1 = polycrystalline
-AMORPHOUS=0.3     # 0.0 = crystalline, 0.3 = amorphous
-NI_PERCENT=50.0   # Ni percentage
-
 # Determine structure type for filename
 if (( $(python3 -c "print(int(${AMORPHOUS} > 0))") )); then
     TYPE="amorphous"
 elif [[ ${GRAINS} -gt 1 ]]; then
-    TYPE="polycrystalline"
+    TYPE="crystalline_${GRAINS}grains"
 else
-    TYPE="crystalline"
+    TYPE="crystalline_1grain"
 fi
 
-# Output file
-OUTPUT="data/structures/niti_${SIZE}nm_${TYPE}.data"
+# Output file with Ni percentage
+NI_INT=$(python3 -c "print(int(${NI_PERCENT}))")
+OUTPUT="data/structures/niti_${SIZE}nm_Ni${NI_INT}_${TYPE}.data"
 
 cd "${PROJECT_ROOT}"
 mkdir -p data/structures
 
-echo "Generating ${SIZE}nm NiTi nanoparticle (${TYPE})..."
+echo "Generating ${SIZE}nm NiTi nanoparticle (${TYPE}, Ni${NI_INT}%)..."
 
 # Build command
 CMD="python3 src/niti_np_gen.py --diameter ${SIZE} --shape ${SHAPE} --ni-percent ${NI_PERCENT} --output ${OUTPUT} --seed ${SEED} --lammps"

@@ -1,44 +1,64 @@
-variable        structure_file string
-variable        output_dir string
+# Energy minimization for NiTi nanostructures
+#
+# NOTE: All file paths (structure_file, output_dir, pot_lib, pot_file)
+# are passed from the mpirun command via the -var flag.
 
 clear
-units           metal
-dimension       3
-boundary        f f f
-atom_style      atomic
+units metal
+dimension 3
+boundary s s s
+atom_style atomic
 
-read_data       ${structure_file}
+read_data ${structure_file}
 
-pair_style      meam
-pair_coeff      * * /home/rimuru/workspace/potentials/library.meam Ni Ti /home/rimuru/workspace/potentials/niti.meam Ni Ti
+# MEAM potential for NiTi
+pair_style meam
+# FIXED: Use variables for portable potential paths
+pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
-neighbor        2.0 bin
-neigh_modify    delay 5 every 1
+neighbor 2.0 bin
+neigh_modify delay 5 every 1
 
-compute         pe all pe/atom
-compute         ke all ke/atom
-compute         stress all stress/atom NULL
+# Compute per-atom properties
+compute pe all pe/atom
+compute ke all ke/atom
+compute stress all stress/atom NULL
 
-thermo          100
-thermo_style    custom step temp pe ke etotal press vol lx ly lz
+thermo 100
+thermo_style custom step temp pe ke etotal press vol lx ly lz
 
-shell           mkdir -p ${output_dir}
+shell mkdir -p ${output_dir}
 
-dump            1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
-dump_modify     1 sort id
-run             0
-undump          1
+# Dump initial structure
+dump 1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
+dump_modify 1 sort id
+run 0
+undump 1
 
-minimize        1.0e-6 1.0e-8 5000 10000
+# Tighter convergence
+minimize 1.0e-8 1.0e-10 10000 50000
 
-write_data      ${output_dir}/minimized.data
-write_restart   ${output_dir}/minimized.restart
+# Save minimized structure
+write_data ${output_dir}/minimized.data
+write_restart ${output_dir}/minimized.restart
 
-dump            2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
-dump_modify     2 sort id
-run             0
-undump          2
+# Dump final structure
+dump 2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
+dump_modify 2 sort id
+run 0
+undump 2
 
-variable        final_pe equal pe
-variable        final_press equal press
-print           "MINIMIZATION COMPLETE: PE=${final_pe} eV, Press=${final_press} bar"
+# Print final state
+variable final_pe equal pe
+variable final_press equal press
+variable final_lx equal lx
+variable final_ly equal ly
+variable final_lz equal lz
+
+print "=========================================="
+print "MINIMIZATION COMPLETE"
+print "=========================================="
+print "Final PE:       ${final_pe} eV"
+print "Final Pressure: ${final_press} bar"
+print "Box size:       ${final_lx} x ${final_ly} x ${final_lz} Å"
+print "=========================================="

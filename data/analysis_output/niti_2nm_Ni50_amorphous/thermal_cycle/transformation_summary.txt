@@ -1,0 +1,29 @@
+# Thermal Transformation Analysis Summary
+# Structure: analysis_output
+------------------------------------------------------------
+ANALYSIS STATUS: [✗ FAILED] Automated checks failed.
+     REASONS:
+         1. Analysis routine failed (e.g., not enough data).
+
+     WARNING: Do NOT trust these values. Check 'transformation_analysis.png' and tune ANALYSIS_CONFIG parameters in the script.
+------------------------------------------------------------
+
+MARTENSITE TRANSFORMATION (COOLING)
+   Ms (Start):    nan K
+   M_peak (Peak):  nan K
+   Mf (Finish):   nan K
+
+AUSTENITE TRANSFORMATION (HEATING)
+   As (Start):    nan K
+   A_peak (Peak):  nan K
+   Af (Finish):   nan K
+
+HYSTERESIS PROPERTIES
+   Width (Af - Ms):         nan K
+   Peak Shift (A_peak - M_peak): nan K
+------------------------------------------------------------
+
+ACTION REQUIRED:
+   Analysis failed. You must manually inspect the .png plot
+   and tune the 'ANALYSIS_CONFIG' parameters at the top
+   of this python script (analyze_thermal_cycle_v2.py).

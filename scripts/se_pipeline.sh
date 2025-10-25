@@ -1,189 +1,267 @@
 #!/bin/bash
+# filepath: /home/rimuru/workspace/scripts/se_pipeline.sh
+# MODIFIED: Runs jobs sequentially for optimal performance on 8-core VM.
 set -euo pipefail
 
-PROJECT_ROOT="/workspace"
-LAMMPS_BIN="/opt/deepmd-kit/install/bin/lmp"
-CPU_CORES=8
+# ============================================
+# CONFIGURATION
+# ============================================
+DATA_FILES=(
+    "data/structures/niti_10nm_Ni50_crystalline_1grain.data"
+    "data/structures/niti_10nm_Ni50_amorphous.data"
+    "data/structures/niti_20nm_Ni50_crystalline_1grain.data"
+    "data/structures/niti_20nm_Ni50_amorphous.data"
+    "data/structures/niti_30nm_Ni50_crystalline_1grain.data"
+    "data/structures/niti_30nm_Ni50_amorphous.data"
+)
+
+PROJECT_ROOT="/home/rimuru/workspace"
+LAMMPS_BIN="/usr/local/bin/lmp"
 SEED=42
 
-cd "${PROJECT_ROOT}"
+# FIXED: Define potential paths as variables
+POT_LIB="${PROJECT_ROOT}/potentials/library.meam"
+POT_FILE="${PROJECT_ROOT}/potentials/niti.meam"
 
+TOTAL_CORES=$(nproc)
+TOTAL_MEM_GB=$(awk '/MemTotal/ {printf "%.0f\n", $2/1024/1024}' /proc/meminfo)
+
+# ============================================
+# Pre-flight Checks
+# ============================================
+if [[ ! -x "${LAMMPS_BIN}" ]]; then
+    echo "ERROR: LAMMPS binary not found at ${LAMMPS_BIN}" >&2
+    echo "Please install LAMMPS or update LAMMPS_BIN path" >&2
+    exit 1
+fi
+
+# Check for potential files
+if [[ ! -f "${POT_LIB}" || ! -f "${POT_FILE}" ]]; then
+    echo "ERROR: Potential file not found." >&2
+    echo "Checked paths:" >&2
+    echo "  ${POT_LIB}" >&2
+    echo "  ${POT_FILE}" >&2
+    exit 1
+fi
+
+export OMP_NUM_THREADS=1
+
+# ============================================
+# Setup
+# ============================================
+cd "${PROJECT_ROOT}"
 mkdir -p logs
 
 echo "=========================================="
 echo "SE Pipeline: Minimize → Mechanical Loading"
-echo "8 cores | 6 structures"
+echo "(Running SERIALLY)"
+echo "=========================================="
+echo "Hardware detected:"
+echo "   • CPU cores: ${TOTAL_CORES}"
+echo "   • Total RAM: ${TOTAL_MEM_GB} GB"
+echo "   • Files to process: ${#DATA_FILES[@]}"
 echo "=========================================="
 
-# ============================================================
-# STEP 1: Generate structures (if needed)
-# ============================================================
-echo ""
-echo "[1/3] Checking structures..."
-
-if [[ ! -f "data/structures/niti_30nm_amor.data" ]]; then
-    echo "  → Structures missing, running generation..."
-    bash scripts/01_generate_structures.sh
-else
-    echo "  ✓ All structures exist"
-fi
-
-# ============================================================
-# STEP 2: Minimize (energy relaxation)
-# ============================================================
-echo ""
-echo "[2/3] Minimizing structures..."
-
-declare -a PIDS
-
-run_min() {
-    SIZE=$1
-    TYPE=$2
-    MPI_RANKS=$3
-    
-    STRUCT="data/structures/niti_${SIZE}nm_${TYPE}.data"
-    OUTDIR="data/raw_output/${SIZE}nm_${TYPE}/minimize"
-    MARKER="${OUTDIR}/.minimize_complete"
-    
-    # Skip if already minimized
-    if [[ -f "${MARKER}" ]]; then
-        echo "  ✓ ${SIZE}nm ${TYPE} (already minimized, skipping)"
-        return 0
-    fi
-    
-    mkdir -p "${OUTDIR}"
-    echo "  → ${SIZE}nm ${TYPE} (${MPI_RANKS} MPI ranks)"
-    
-    if [[ ! -f "${STRUCT}" ]]; then
-        echo "ERROR: Structure file not found: ${STRUCT}" >&2
-        return 1
-    fi
-    
-    export OMP_NUM_THREADS=1
-    
-    mpirun --allow-run-as-root -n "${MPI_RANKS}" "${LAMMPS_BIN}" \
-        -var structure_file "${STRUCT}" \
-        -var output_dir "${OUTDIR}" \
-        -in src/lammps/templates/minimize.lmp \
-        > "logs/min_${SIZE}nm_${TYPE}.log" 2>&1 &
-    
-    local pid=$!
-    PIDS+=($pid)
-    
-    # Create marker file on successful completion
-    (wait ${pid} && touch "${MARKER}") &
+# ============================================
+# Helper Functions
+# ============================================
+get_base_name() {
+    basename "$1" .data
 }
 
-wait_batch() {
-    local failed=0
-    for pid in "${PIDS[@]}"; do
-        if ! wait "${pid}"; then
-            echo "ERROR: Job with PID ${pid} failed. Check logs/" >&2
-            failed=1
-        fi
-    done
-    PIDS=()
+get_atom_count() {
+    local datafile=$1
+    [[ ! -f "${datafile}" ]] && echo "0" && return
+    local count
+    count=$(grep -m1 "atoms" "${datafile}" 2>/null | awk '{print $1}')
+    echo "${count:-0}"
+}
+
+estimate_memory() {
+    local atoms=$1
+    # MEAM: ~18 KB/atom → convert to GB: ÷1024 (→MB) ÷1024 (→GB) + 2GB overhead
+    # Lowered minimum from 3 to 1 for testing on small VMs
+    python3 -c "print(max(1, int(${atoms} * 18 / 1024 / 1024) + 1))"
+}
+
+assign_ranks() {
+    local atoms=$1
+    # Do not assign more ranks than we have cores
+    local max_ranks=${TOTAL_CORES}
     
-    if [[ ${failed} -eq 1 ]]; then
+    if [[ ${atoms} -lt 10000 ]]; then
+        echo "2"
+    elif [[ ${atoms} -lt 100000 ]]; then
+        echo "4"
+    elif [[ ${atoms} -lt 500000 ]]; then
+        echo "8"
+    else
+        echo "${max_ranks}"
+    fi
+}
+
+# ============================================
+# STEP 1: Analyze structures
+# ============================================
+echo ""
+echo "[1/3] Analyzing structures..."
+
+declare -A ATOM_COUNTS
+declare -A MEM_ESTIMATES
+declare -A MPI_RANKS
+
+for datafile in "${DATA_FILES[@]}"; do
+    if [[ ! -f "${datafile}" ]]; then
+        echo "WARNING: File not found: ${datafile}" >&2
+        continue
+    fi
+    
+    structure_name=$(get_base_name "${datafile}")
+    atoms=$(get_atom_count "${datafile}")
+    
+    if [[ ${atoms} -eq 0 ]]; then
+        echo "WARNING: Could not read atom count from ${datafile}" >&2
+        continue
+    fi
+    
+    ranks=$(assign_ranks "${atoms}")
+    mem=$(estimate_memory "${atoms}")
+    
+    ATOM_COUNTS["${structure_name}"]=${atoms}
+    MEM_ESTIMATES["${structure_name}"]=${mem}
+    MPI_RANKS["${structure_name}"]=${ranks}
+    
+    echo "   • ${structure_name}"
+    echo "       Atoms: ${atoms} | RAM: ~${mem} GB | MPI ranks: ${ranks}"
+done
+
+# ============================================
+# STEP 2: Minimize structures
+# ============================================
+echo ""
+echo "[2/3] Minimizing structures (sequentially)..."
+
+for datafile in "${DATA_FILES[@]}"; do
+    [[ ! -f "${datafile}" ]] && continue
+    
+    structure_name=$(get_base_name "${datafile}")
+    outdir="data/raw_output/${structure_name}/minimize"
+    marker="${outdir}/.minimize_complete"
+    output_check="${outdir}/minimized.data"
+    
+    if [[ -f "${marker}" ]]; then
+        echo "   ✓ ${structure_name} (already done)"
+        continue
+    fi
+    
+    mkdir -p "${outdir}"
+    
+    mem="${MEM_ESTIMATES[$structure_name]}"
+    ranks="${MPI_RANKS[$structure_name]}"
+    
+    echo "   → Running ${structure_name} (${ranks} ranks, ~${mem} GB)..."
+    
+    logfile="logs/min_${structure_name}.log"
+    
+    # Run the command in the foreground (no '&')
+    # FIXED: Added variables for potential files
+    mpirun --allow-run-as-root -n "${ranks}" "${LAMMPS_BIN}" \
+        -var structure_file "${datafile}" \
+        -var output_dir "${outdir}" \
+        -var pot_lib "${POT_LIB}" \
+        -var pot_file "${POT_FILE}" \
+        -in src/lmps/minimize.lmp \
+        > "${logfile}" 2>&1
+    
+    # Check if the job was successful
+    if [[ -f "${output_check}" ]]; then
+        touch "${marker}"
+        echo "     ✓ ${structure_name} complete."
+    else
+        echo "     ✗ ${structure_name} FAILED (check ${logfile})" >&2
         exit 1
     fi
-}
+done
 
-# Batch 1: 10nm (4 cores total)
-run_min 10 sc 2
-run_min 10 amor 2
-wait_batch
+echo "   ✓ All minimizations complete"
 
-# Batch 2: 20nm (8 cores total)
-run_min 20 sc 4
-run_min 20 amor 4
-wait_batch
-
-# Batch 3: 30nm sc (8 cores)
-run_min 30 sc 8
-wait_batch
-
-# Batch 4: 30nm amor (8 cores)
-run_min 30 amor 8
-wait_batch
-
-echo "  ✓ All minimizations complete"
-
-# ============================================================
+# ============================================
 # STEP 3: SE mechanical loading
-# ============================================================
+# ============================================
 echo ""
-echo "[3/3] Running SE mechanical loading..."
+echo "[3/3] Running SE mechanical loading (sequentially)..."
 
-run_se() {
-    SIZE=$1
-    TYPE=$2
-    MPI_RANKS=$3
+for datafile in "${DATA_FILES[@]}"; do
+    [[ ! -f "${datafile}" ]] && continue
     
-    INDATA="data/raw_output/${SIZE}nm_${TYPE}/minimize/minimized.data"
-    OUTDIR="data/raw_output/${SIZE}nm_${TYPE}/se"
-    MARKER="${OUTDIR}/.se_complete"
+    structure_name=$(get_base_name "${datafile}")
+    indata="data/raw_output/${structure_name}/minimize/minimized.data"
+    outdir="data/raw_output/${structure_name}/se"
+    marker="${outdir}/.se_complete"
+    # Use your robust check: final.data or stress_strain.txt
+    output_check_1="${outdir}/final.data"
+    output_check_2="${outdir}/stress_strain.txt"
     
-    # Skip if already done
-    if [[ -f "${MARKER}" ]]; then
-        echo "  ✓ ${SIZE}nm ${TYPE} (already complete, skipping)"
-        return 0
+    if [[ -f "${marker}" ]]; then
+        echo "   ✓ ${structure_name} (already done)"
+        continue
     fi
     
-    mkdir -p "${OUTDIR}"
-    echo "  → ${SIZE}nm ${TYPE} (${MPI_RANKS} MPI ranks)"
-    
-    if [[ ! -f "${INDATA}" ]]; then
-        echo "ERROR: Minimized data not found: ${INDATA}" >&2
-        return 1
+    if [[ ! -f "${indata}" ]]; then
+        echo "   ✗ ${structure_name} - minimized data missing, skipping" >&2
+        continue
     fi
     
-    export OMP_NUM_THREADS=1
+    mkdir -p "${outdir}"
     
-    mpirun --allow-run-as-root -n "${MPI_RANKS}" "${LAMMPS_BIN}" \
-        -var input_data "${INDATA}" \
-        -var output_dir "${OUTDIR}" \
+    mem="${MEM_ESTIMATES[$structure_name]}"
+    ranks="${MPI_RANKS[$structure_name]}"
+
+    echo "   → Running ${structure_name} (${ranks} ranks, ~${mem} GB)..."
+    
+    logfile="logs/se_${structure_name}.log"
+    
+    # Run the command in the foreground (no '&')
+    # FIXED: Added variables for potential files
+    mpirun --allow-run-as-root -n "${ranks}" "${LAMMPS_BIN}" \
+        -var input_data "${indata}" \
+        -var output_dir "${outdir}" \
         -var seed ${SEED} \
-        -in src/lammps/templates/se_mechanical_load.lmp \
-        > "logs/se_${SIZE}nm_${TYPE}.log" 2>&1 &
-    
-    local pid=$!
-    PIDS+=($pid)
-    
-    # Create marker file on successful completion
-    (wait ${pid} && touch "${MARKER}") &
-}
+        -var pot_lib "${POT_LIB}" \
+        -var pot_file "${POT_FILE}" \
+        -in src/lmps/se_mechanical_load.lmp \
+        > "${logfile}" 2>&1
+        
+    # Check if the job was successful
+    if [[ -f "${output_check_1}" || -f "${output_check_2}" ]]; then
+        touch "${marker}"
+        echo "     ✓ ${structure_name} complete."
+    else
+        echo "     ✗ ${structure_name} FAILED (check ${logfile})" >&2
+        exit 1
+    fi
+done
 
-# Batch 1: 10nm (4 cores total)
-run_se 10 sc 2
-run_se 10 amor 2
-wait_batch
+echo "   ✓ SE mechanical loading complete"
 
-# Batch 2: 20nm (8 cores total)
-run_se 20 sc 4
-run_se 20 amor 4
-wait_batch
-
-# Batch 3: 30nm sc (8 cores)
-run_se 30 sc 8
-wait_batch
-
-# Batch 4: 30nm amor (8 cores)
-run_se 30 amor 8
-wait_batch
-
-echo "  ✓ SE mechanical loading complete"
-
-# ============================================================
+# ============================================
 # Summary
-# ============================================================
+# ============================================
 echo ""
 echo "=========================================="
 echo "✓ SE PIPELINE COMPLETE"
 echo "=========================================="
-echo "Outputs:"
-echo "  • Minimized:  data/raw_output/*/minimize/"
-echo "  • SE results: data/raw_output/*/se/"
-echo "  • Logs:       logs/"
+echo "Results:"
+for datafile in "${DATA_FILES[@]}"; do
+    [[ ! -f "${datafile}" ]] && continue
+    structure_name=$(get_base_name "${datafile}")
+    if [[ -f "data/raw_output/${structure_name}/se/.se_complete" ]]; then
+        echo "   ✓ ${structure_name}"
+    else
+        echo "   ✗ ${structure_name} (INCOMPLETE)"
+    fi
+done
 echo ""
-echo "Next: Analyze SE stress-strain curves and superelastic recovery"
+echo "Output: data/raw_output/<structure>/{minimize,se}/"
+echo "Logs: logs/"
+echo "=========================================="

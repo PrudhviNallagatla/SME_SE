@@ -1,90 +1,95 @@
-variable        input_data string
-variable        output_dir string
-variable        seed equal 12345
+# filepath: /home/rimuru/workspace/src/lmps/sme_thermal_cycle.lmp
+# GOAL: Find transformation temperatures (Ms, Mf, As, Af)
+
+# variable input_data string data.niti_poly_example
+# variable output_dir string output_thermal_cycle
+# variable seed equal 12345
+
+# variable pot_lib string "/home/rimuru/workspace/potentials/library.meam"
+# variable pot_file string "/home/rimuru/workspace/potentials/NiTi.meam"
 
 clear
-units           metal
-dimension       3
-boundary        f f f
-atom_style      atomic
+units metal
+dimension 3
+boundary s s s
+atom_style atomic
 
-read_data       ${input_data}
+read_data ${input_data}
 
-pair_style      meam
-pair_coeff      * * /home/rimuru/workspace/potentials/library.meam Ni Ti /home/rimuru/workspace/potentials/niti.meam Ni Ti
+# MEAM potential
+pair_style meam
+# FIXED: Use variables for potential paths
+pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
-neighbor        2.0 bin
-neigh_modify    delay 5 every 1
+neighbor 2.0 bin
+neigh_modify delay 0 every 1 check yes
 
-compute         pe_atom all pe/atom
-compute         ke_atom all ke/atom
-compute         stress_atom all stress/atom NULL
-compute         centro all centro/atom bcc
+# Computes, Timestep, Parameters, Damping, etc.
+compute pe_atom all pe/atom
+compute ke_atom all ke/atom
+compute stress_atom all stress/atom NULL
+compute centro all centro/atom bcc
+compute cna all cna/atom 3.5
+timestep 0.001
+variable T_low equal 50.0
+variable T_high equal 400.0
+variable T_rate equal 1.0       # use 0.0001 for 1 K/ps for actual simulations
+variable temp_diff equal (v_T_high-v_T_low)
+variable steps_ramp equal round(v_temp_diff/v_T_rate)
+variable equil_steps equal 100         # use 50000 for actual simulations
+variable tdamp equal $(100.0*dt)
+variable pdamp equal $(1000.0*dt)
+shell mkdir -p ${output_dir}
+thermo 1000
+thermo_style custom step temp pe ke etotal press vol lx ly lz density pxx pyy pzz
+dump 1 all custom 2000 ${output_dir}/thermal_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6] c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6]
+dump_modify 1 sort id
+fix thermo_out all print 100 "$(step) $(temp) $(pe) $(ke) $(etotal) $(press) $(vol) $(lx) $(ly) $(lz) $(pxx) $(pyy) $(pzz)" file ${output_dir}/thermo_detailed.txt screen no title "# step temp pe ke etotal press vol lx ly lz pxx pyy pzz"
 
-timestep        0.001
+# ============================================
+# Initial Equilibration at T_high
+# ============================================
+print "=== Equilibrating at ${T_high} K (Austenite) ==="
+velocity all create ${T_high} ${seed} dist gaussian
+fix 1 all nvt temp ${T_high} ${T_high} ${tdamp}
+run ${equil_steps}
+unfix 1
+write_restart ${output_dir}/initial_high.restart
 
-variable        T_low equal 50.0
-variable        T_high equal 400.0
-variable        T_rate equal 0.0005
-variable        temp_diff equal (v_T_high-v_T_low)
-variable        steps_ramp equal round(v_temp_diff/v_T_rate)
-variable        equil_steps equal 50000
+# ============================================
+# CYCLE 1: Cooling
+# ============================================
+print "=== Cycle 1: Cooling ${T_high} -> ${T_low} K (A -> M) ==="
+fix 1 all nvt temp ${T_high} ${T_low} ${tdamp}
+run ${steps_ramp}
+unfix 1
+print "=== Cycle 1: Equilibrating at ${T_low} K (Martensite) ==="
+fix 1 all nvt temp ${T_low} ${T_low} ${tdamp}
+run ${equil_steps}
+unfix 1
+write_restart ${output_dir}/cycle1_low.restart
 
-shell           mkdir -p ${output_dir}
+# ============================================
+# CYCLE 1: Heating
+# ============================================
+print "=== Cycle 1: Heating ${T_low} -> ${T_high} K (M -> A) ==="
+fix 1 all nvt temp ${T_low} ${T_high} ${tdamp}
+run ${steps_ramp}
+unfix 1
+print "=== Cycle 1: Equilibrating at ${T_high} K (Austenite) ==="
+fix 1 all nvt temp ${T_high} ${T_high} ${tdamp}
+run ${equil_steps}
+unfix 1
+write_restart ${output_dir}/cycle1_high.restart
 
-thermo          1000
-thermo_style    custom step temp pe ke etotal press vol lx ly lz density pxx pyy pzz
-
-dump            1 all custom 2000 ${output_dir}/thermal_*.dump id type x y z c_pe_atom c_ke_atom c_centro
-dump_modify     1 sort id
-
-fix             thermo_out all print 100 "$(step) $(temp) $(pe) $(ke) $(etotal) $(press) $(vol) $(lx) $(ly) $(lz)" &
-                file ${output_dir}/thermo_detailed.txt screen no title "# step temp pe ke etotal press vol lx ly lz"
-
-velocity        all create ${T_low} ${seed} dist gaussian
-fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-write_restart   ${output_dir}/equil_low.restart
-
-fix             1 all nvt temp ${T_low} ${T_high} $(100.0*dt)
-run             ${steps_ramp}
-unfix           1
-
-fix             1 all nvt temp ${T_high} ${T_high} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-write_restart   ${output_dir}/equil_high.restart
-
-fix             1 all nvt temp ${T_high} ${T_low} $(100.0*dt)
-run             ${steps_ramp}
-unfix           1
-
-fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-
-fix             1 all nvt temp ${T_low} ${T_high} $(100.0*dt)
-run             ${steps_ramp}
-unfix           1
-
-fix             1 all nvt temp ${T_high} ${T_high} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-
-fix             1 all nvt temp ${T_high} ${T_low} $(100.0*dt)
-run             ${steps_ramp}
-unfix           1
-
-fix             1 all nvt temp ${T_low} ${T_low} $(100.0*dt)
-run             ${equil_steps}
-unfix           1
-
-write_data      ${output_dir}/final.data
-write_restart   ${output_dir}/final.restart
-
-undump          1
-unfix           thermo_out
-
-variable        total_time equal step*dt
-print           "SME COMPLETE: ${total_time} ps, Range ${T_low}-${T_high} K, 2 cycles"
+# ============================================
+# Final state
+# ============================================
+write_data ${output_dir}/final.data
+undump 1
+unfix thermo_out
+print "=========================================="
+print "THERMAL CYCLING COMPLETE"
+print "=========================================="
+print "Analyze thermo_detailed.txt for hysteresis (e.g., plot PE vs Temp)"
+print "=========================================="
