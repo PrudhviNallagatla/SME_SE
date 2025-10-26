@@ -26,20 +26,20 @@ compute stress_atom all stress/atom NULL
 compute centro all centro/atom bcc # B2 Austenite
 compute cna all cna/atom 3.5
 
-timestep 0.001   # 1 fs
+timestep 0.001  # 1 fs
 
 # --- Simulation Parameters (FAST TEST) ---
 # Thermal parameters
 variable T_low equal 50.0
 variable T_high equal 400.0
-variable T_rate equal 1.0           # TEST: 1.0 K/step (was 0.0001)
+variable T_rate equal 0.0001          # TEST: 1.0 K/step (was 0.0001)
 variable temp_diff equal (v_T_high-v_T_low)
 variable steps_ramp equal round(v_temp_diff/v_T_rate)
-variable equil_steps equal 100     # TEST: 100 steps (was 50000)
+variable equil_steps equal 50000     # TEST: 100 steps (was 50000)
 
 # Deformation parameters
 variable deform_strain equal 0.08
-variable deform_rate equal 0.1       # TEST: 0.1 strain/ps (was 1.0e-3)
+variable deform_rate equal 1.0e-3      # TEST: 0.1 strain/ps (was 1.0e-3)
 variable deform_time equal v_deform_strain/v_deform_rate
 variable deform_steps equal round(v_deform_time/dt)
 

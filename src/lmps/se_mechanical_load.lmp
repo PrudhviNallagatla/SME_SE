@@ -36,7 +36,7 @@ timestep 0.001  # use this in real sim: 0.001 ps (1 fs)
 variable test_temp equal 300.0
 variable strain_rate equal 1.0e-3   # use this in real sim: 1.0e-3 /ps (standard strain rate)
 variable max_strain equal 0.08
-variable equil_steps equal 100   # use this in real sim: 50000 steps (100 ps)
+variable equil_steps equal 50000   # use this in real sim: 50000 steps (100 ps)
 
 # Corrected strain step calculation
 variable loading_time equal v_max_strain/v_strain_rate

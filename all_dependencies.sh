@@ -27,20 +27,33 @@ sudo apt-get upgrade -y
 # Install all dependencies
 echo ""
 echo "[2/6] Installing build dependencies and tools..."
+# [2/6] Installing build dependencies and tools...
 sudo apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
+    git-lfs \
     ca-certificates \
     wget \
     curl \
     vim \
     nano \
+    neovim \
     btop \
     ncdu \
     tmux \
     tree \
     unzip \
+    zip \
+    pigz \
+    zstd \
+    xz-utils \
+    rsync \
+    jq \
+    ripgrep \
+    fd-find \
+    zsh \
+    cifs-utils \
     gfortran \
     g++ \
     gcc \
@@ -83,6 +96,7 @@ pip3 install --no-cache-dir \
     tqdm \
     pyyaml \
     h5py \
+    netcdf4 \
     seaborn \
     plotly \
     bokeh \
@@ -187,6 +201,10 @@ sudo rm -rf /tmp/lammps
 sudo apt-get autoremove -y
 sudo apt-get clean
 
+echo "Linking 'fdfind' to 'fd' for easier use..."
+sudo ln -s $(which fdfind) /usr/local/bin/fd
+echo "✓ 'fd' command is now available."
+
 echo ""
 echo "=================================================="
 echo "Installation completed successfully!"
@@ -202,3 +220,4 @@ echo ""
 echo "Python packages installed:"
 pip3 list | grep -E "numpy|scipy|matplotlib|ovito|ase|pandas|jupyter"
 echo ""
+

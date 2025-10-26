@@ -33,10 +33,10 @@ compute cna all cna/atom 3.5
 timestep 0.001
 variable T_low equal 50.0
 variable T_high equal 400.0
-variable T_rate equal 1.0       # use 0.0001 for 1 K/ps for actual simulations
+variable T_rate equal 0.0001       # use 0.0001 for 1 K/ps for actual simulations
 variable temp_diff equal (v_T_high-v_T_low)
 variable steps_ramp equal round(v_temp_diff/v_T_rate)
-variable equil_steps equal 100         # use 50000 for actual simulations
+variable equil_steps equal 50000         # use 50000 for actual simulations
 variable tdamp equal $(100.0*dt)
 variable pdamp equal $(1000.0*dt)
 shell mkdir -p ${output_dir}

@@ -85,6 +85,105 @@ v                    v                  v
 
 -----
 
+## Detailed Storage Setup 🗂️
+
+Imagine on your **local computer** (your laptop), your project is in a folder named `NiTi_Project`. When you open it, you see this structure:
+
+```
+NiTi_Project/
+├── .git/
+├── all_dependencies.sh
+├── README.md
+├── data/
+│   ├── structures/
+│   └── ...
+├── logs/
+├── potentials/
+│   ├── NiTi.meam
+│   └── library.meam
+├── scripts/
+│   ├── run_all.sh
+│   └── ...
+└── src/
+    ├── niti_np_gen.py
+    └── ...
+```
+
+Your goal is to make the *inside* of your Azure File Share look exactly like the *inside* of this `NiTi_Project` folder.
+
+### Step 1: Go to Your File Share in Azure
+
+1.  In the Azure Portal, find and click on your **Storage Account**.
+2.  On the left-hand menu, click on **"File shares"**.
+3.  Click on the name of the file share you created (e.g., `rimuru-workspace-storage`).
+
+You are now looking at the **root** of your file share. It is currently empty. You will see an **"Upload"** button at the top.
+
+### Step 2: Upload Your Project Folders
+
+1.  Click the **"Upload"** button. A new panel will open.
+2.  On your **local computer**, open your `NiTi_Project` folder.
+3.  **Select** the following five folders (and *only* these five folders):
+      * `data`
+      * `logs`
+      * `potentials`
+      * `scripts`
+      * `src`
+4.  **Drag and drop** these five folders from your computer into the Azure "Upload" panel.
+
+**Note:** You do not need to upload `all_dependencies.sh`, `README.md`, or the `.git` folder. Your "Template Image" *already* has all the dependencies installed, and the simulation scripts don't need the other files.
+
+### Step 3: Verify the Final Structure
+
+After the upload finishes, the root directory of your Azure File Share should look like this:
+
+```
+<Your File Share Name> /
+├── data/
+├── logs/
+├── potentials/
+├── scripts/
+└── src/
+```
+
+When you (for example) click on the `potentials` folder *in the Azure Portal*, you should see your `NiTi.meam` and `library.meam` files inside it.
+
+### Why This Works
+
+Now, when you do the **simulation step**, you will run this command on your new VMs:
+
+```bash
+# 2a. Create the empty "link" folder
+mkdir /home/rimuru/workspace
+
+# 2b. Mount your storage to that folder
+sudo mount -t cifs //yourstorage.file.core.windows.net/... /home/rimuru/workspace -o <...options...>
+```
+
+You have now told the VM: "Whenever any program (like LAMMPS or Python) tries to access the `/home/rimuru/workspace` directory, you must *actually* go to the Azure File Share."
+
+So, when your script (which you never had to edit!) runs a command:
+`lmp -in /home/rimuru/workspace/src/lmps/sme_thermal_cycle.lmp ...`
+
+The VM does the following:
+
+1.  It goes to `/home/rimuru/workspace`...
+2.  ...realizes this is just a link to your **Azure File Share**...
+3.  ...opens the `src` folder on the file share...
+4.  ...opens the `lmps` folder...
+5.  ...and finds your `sme_thermal_cycle.lmp` file.
+
+When LAMMPS writes an output file to `/home/rimuru/workspace/data/raw_output/`, it is writing *directly* onto your permanent Azure File Share, not the temporary VM.
+
+
+* Which is faster, 8x2 or 4x4, is a classic performance-tuning question. There is no single "right" answer; it depends on your exact simulation:
+
+    **8x2 (More MPI)**: Often better for very large systems where splitting the domain into more pieces is most important.
+
+    **4x4 (More OMP)**: Often better for systems with complex calculations (like MEAM or REAXFF), where giving more thread-power to each MPI rank to calculate forces is more important.
+
+-----
+
 ## Usage
 
 ### 1\. Local / Test Setup (Docker)
@@ -138,12 +237,24 @@ This step saves you hours of setup time for every run. You do this **once**.
 
 #### Step 3: Run Simulations in Parallel 🚀
 
+### Before starting, very important: VM Management and Cost Optimization 💰
+
+**🚀 Flexible VM Scheduling:** It doesn't matter whether you launch all VMs simultaneously or run them sequentially (one after another) - Azure charges per VM per hour, so the total cost remains the same. This gives you maximum flexibility: run all at once for fastest results, or stagger them to match your schedule or budget constraints.
+
+**⚡ Golden Image Priority:** Always set up your Golden VM Image correctly **first** before starting any simulations. Once ready, you can "whip out" VMs instantly - launch, run jobs, and delete. Each simulation cycle is: VM up → mount storage → run → VM down. No setup time wasted!
+
+**🧠 Don't Overpay for RAM: Core-First VM Selection:** **Cores are your top priority** for parallel LAMMPS simulations. For less demanding jobs, choose VMs with more cores but less RAM (e.g., 32 cores with 16GB RAM) over fewer cores with excessive RAM. Your Golden Image boots in minutes, so focus on computational power - permanent storage handles all data persistence.
+
+**💸 Late-Night Optimization:** If running simulations late at night, remember: only storage costs matter. VM compute costs stop when you delete the VMs. Keep your Azure File Share for long-term data, but delete VMs immediately after jobs complete to minimize expenses.
+
+**VM Selection Tip (very important):** When selecting VMs for simulations, prioritize configurations with higher core counts over excessive RAM, as permanent storage handles data persistence. A golden VM image ensures quick setup, so focus on cores for parallel processing—32GB RAM is typically sufficient, and even 16GB may suffice in some cases, but never compromise on core availability.
+      * These VMs will boot in minutes, fully configured.
+  
 Now, whenever you need to run your study:
 
 1.  **Launch VMs:** Launch **3** (or more) new VMs.
       * **Image:** Under "Image," select **"My Images"** and choose your `rimuru-lammps-ubuntu-v1` image.
       * **Settings:** Use the same `Standard_F16s_v2`, **Spot Instance**, and **32GB P4** disk settings.
-      * These VMs will boot in minutes, fully configured.
 2.  **Connect & Mount:**
       * Open a separate VS Code window (Remote-SSH) for each VM.
       * In *each* VM's terminal, mount your shared storage (Azure provides the copy-paste command for this):
@@ -216,6 +327,11 @@ Find the `dump` commands and increase the output interval to a very large number
 
 This saves only a few snapshots for figures, not thousands of frames for a video.
 
+### 💡 Pro-Tip for Cost Savings while zipping
+
+You **do not need an expensive 16-core VM** to run the compression script.
+
+Since the task is limited by storage I/O, a powerful CPU will just sit idle. You can save money by launching a cheap 2-core or 4-core VM just for this task. It will likely take the exact same amount of time (30-45 minutes) and cost you pennies.
 -----
 
 ## 4\. Data Analysis Workflow 📊
