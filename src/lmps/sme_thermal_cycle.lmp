@@ -42,7 +42,7 @@ variable pdamp equal $(1000.0*dt)
 shell mkdir -p ${output_dir}
 thermo 1000
 thermo_style custom step temp pe ke etotal press vol lx ly lz density pxx pyy pzz
-dump 1 all custom 2000 ${output_dir}/thermal_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6] c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6]
+dump 1 all custom 5000 ${output_dir}/thermal_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6] c_stress_atom[1] c_stress_atom[2] c_stress_atom[3] c_stress_atom[4] c_stress_atom[5] c_stress_atom[6]
 dump_modify 1 sort id
 fix thermo_out all print 100 "$(step) $(temp) $(pe) $(ke) $(etotal) $(press) $(vol) $(lx) $(ly) $(lz) $(pxx) $(pyy) $(pzz)" file ${output_dir}/thermo_detailed.txt screen no title "# step temp pe ke etotal press vol lx ly lz pxx pyy pzz"
 

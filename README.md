@@ -85,102 +85,64 @@ v                    v                  v
 
 -----
 
-## Detailed Storage Setup 🗂️
+## Understanding the Azure Architecture
 
-Imagine on your **local computer** (your laptop), your project is in a folder named `NiTi_Project`. When you open it, you see this structure:
+Before diving into setup, it's crucial to understand **why** we split files between the Golden VM Image and Azure File Share:
 
-```
-NiTi_Project/
-├── .git/
-├── all_dependencies.sh
-├── README.md
-├── data/
-│   ├── structures/
-│   └── ...
-├── logs/
-├── potentials/
-│   ├── NiTi.meam
-│   └── library.meam
-├── scripts/
-│   ├── run_all.sh
-│   └── ...
-└── src/
-    ├── niti_np_gen.py
-    └── ...
-```
+### Golden VM Image (Software Environment)
+**What it contains:**
+- Ubuntu OS + all system packages
+- Compiled LAMMPS with MPI
+- Python with NumPy, SciPy, Matplotlib, Pandas, Jupyter, Ovito
+- `all_dependencies.sh` (used only during image creation)
+- `.git` folder (optional, for version tracking during development)
 
-Your goal is to make the *inside* of your Azure File Share look exactly like the *inside* of this `NiTi_Project` folder.
+**Why this approach:**
+- **Speed:** Once built, new VMs boot in ~2 minutes, fully ready to run simulations
+- **Consistency:** Every VM has identical software versions—no installation errors
+- **No Setup Time:** Skip the 20-40 minute LAMMPS compilation on every VM
 
-### Step 1: Go to Your File Share in Azure
+**Key Point:** The Golden Image is a **read-only template**. You build it once, then use it to create many identical VMs. You cannot modify files inside a running VM's "golden" installation.
 
-1.  In the Azure Portal, find and click on your **Storage Account**.
-2.  On the left-hand menu, click on **"File shares"**.
-3.  Click on the name of the file share you created (e.g., `rimuru-workspace-storage`).
+### Azure File Share (Live Project Data)
+**What it contains:**
+- `/data/` — Input structures and simulation outputs
+- `/logs/` — Runtime logs
+- `/potentials/` — MEAM force field files
+- `/scripts/` — Workflow control scripts
+- `/src/` — Python generators and LAMMPS input files
 
-You are now looking at the **root** of your file share. It is currently empty. You will see an **"Upload"** button at the top.
+**Why this approach:**
+- **Shared Access:** All VMs read/write the same storage simultaneously
+- **Data Persistence:** Results survive even if a Spot VM is evicted
+- **Easy Updates:** Modify scripts or add structures without rebuilding VMs
+- **Centralized Results:** No need to copy data between VMs
 
-### Step 2: Upload Your Project Folders
+### How They Work Together
 
-1.  Click the **"Upload"** button. A new panel will open.
-2.  On your **local computer**, open your `NiTi_Project` folder.
-3.  **Select** the following five folders (and *only* these five folders):
-      * `data`
-      * `logs`
-      * `potentials`
-      * `scripts`
-      * `src`
-4.  **Drag and drop** these five folders from your computer into the Azure "Upload" panel.
-
-**Note:** You do not need to upload `all_dependencies.sh`, `README.md`, or the `.git` folder. Your "Template Image" *already* has all the dependencies installed, and the simulation scripts don't need the other files.
-
-### Step 3: Verify the Final Structure
-
-After the upload finishes, the root directory of your Azure File Share should look like this:
-
-```
-<Your File Share Name> /
-├── data/
-├── logs/
-├── potentials/
-├── scripts/
-└── src/
-```
-
-When you (for example) click on the `potentials` folder *in the Azure Portal*, you should see your `NiTi.meam` and `library.meam` files inside it.
-
-### Why This Works
-
-Now, when you do the **simulation step**, you will run this command on your new VMs:
-
+When you run a simulation:
 ```bash
-# 2a. Create the empty "link" folder
-mkdir /home/rimuru/workspace
-
-# 2b. Mount your storage to that folder
-sudo mount -t cifs //yourstorage.file.core.windows.net/... /home/rimuru/workspace -o <...options...>
+# Inside any VM:
+sudo mount -t cifs //yourstorage.file.core.windows.net/yourshare /workspace
+cd /workspace
+./scripts/run_all.sh
 ```
 
-You have now told the VM: "Whenever any program (like LAMMPS or Python) tries to access the `/home/rimuru/workspace` directory, you must *actually* go to the Azure File Share."
+**What happens:**
+1. The VM uses **installed software** from the Golden Image (LAMMPS, Python)
+2. It **reads scripts** from `/workspace/scripts/` (Azure File Share)
+3. It **reads potentials** from `/workspace/potentials/` (Azure File Share)
+4. It **writes results** to `/workspace/data/raw_output/` (Azure File Share)
 
-So, when your script (which you never had to edit!) runs a command:
-`lmp -in /home/rimuru/workspace/src/lmps/sme_thermal_cycle.lmp ...`
+**The mounting command** (`mount -t cifs ...`) connects your VM to Azure storage over the network. Think of it like plugging in a USB drive—except the "drive" is in Azure's datacenter and multiple VMs can access it simultaneously.
 
-The VM does the following:
+**Why Not Put Everything in the File Share?**
+- You *could*, but then every VM would need to install LAMMPS (20-40 min each)
+- With our approach: VM boots in 2 minutes, ready to simulate immediately
 
-1.  It goes to `/home/rimuru/workspace`...
-2.  ...realizes this is just a link to your **Azure File Share**...
-3.  ...opens the `src` folder on the file share...
-4.  ...opens the `lmps` folder...
-5.  ...and finds your `sme_thermal_cycle.lmp` file.
-
-When LAMMPS writes an output file to `/home/rimuru/workspace/data/raw_output/`, it is writing *directly* onto your permanent Azure File Share, not the temporary VM.
-
-
-* Which is faster, 8x2 or 4x4, is a classic performance-tuning question. There is no single "right" answer; it depends on your exact simulation:
-
-    **8x2 (More MPI)**: Often better for very large systems where splitting the domain into more pieces is most important.
-
-    **4x4 (More OMP)**: Often better for systems with complex calculations (like MEAM or REAXFF), where giving more thread-power to each MPI rank to calculate forces is more important.
+**Why Not Put Everything in the Golden Image?**
+- VM images are **immutable**—you can't change project files without rebuilding
+- File Share lets you update scripts/data anytime without touching VMs
 
 -----
 
@@ -213,27 +175,99 @@ This step saves you hours of setup time for every run. You do this **once**.
       * **Pricing:** **Azure Spot Instance** (set eviction to "Deallocate")
       * **Username:** e.g., `rimuru`
       * **OS Disk:** **32 GB Premium SSD (P4)**
+
 2.  **Connect & Install:**
       * Connect to the VM using **VS Code Remote-SSH** (`ssh rimuru@Your_VM_IP`).
-      * Upload or paste your `all_dependencies.sh` script.
+      * **Upload your entire project folder** (including `all_dependencies.sh`, `.git`, etc.) to the VM for convenience during setup.
       * Run the installation:
         ```bash
         chmod +x all_dependencies.sh
         ./all_dependencies.sh
         ```
       * This will take **20-40 minutes** to compile LAMMPS and install all Python packages. ☕
+
 3.  **Clean Up & Shut Down:**
-      * Run `history -c` (optional).
+      * **Optional:** Remove project files if desired (`rm -rf ~/SME_SE`), but keeping `all_dependencies.sh` and `.git` in the image is harmless and can help with future updates.
+      * Run `history -c` (optional, to clear command history).
       * Shut down the VM cleanly: `sudo shutdown now`
+
 4.  **Capture the Image:**
       * In the Azure Portal, find your (now stopped) VM.
       * Click the **"Capture"** button.
       * Give the image a name (e.g., `rimuru-lammps-ubuntu-v1`). This is now your reusable "Golden Image."
 
+**Note on Files in Golden Image:** The `all_dependencies.sh` and `.git` folder in your Golden Image are **inert**—they don't interfere with simulations. VMs created from this image will run simulations using the **live project files** from your Azure File Share (mounted at `/workspace`), not from any files baked into the image.
+
 #### Step 2: Set Up Shared Storage (One-Time Setup)
 
-1.  **Create Storage:** In the Azure Portal, create a **256 GB Azure File Share**.
-2.  **Upload Project:** Upload your *entire* project folder to this file share. It should now contain `/data`, `/potentials`, `/src`, and `/scripts`.
+Now that your Golden Image is ready, prepare the storage that all VMs will share.
+
+##### 2.1: Create Azure File Share
+
+1.  In the Azure Portal, create a **256 GB Azure File Share** in your storage account.
+2.  Note the share name (e.g., `rimuru-workspace-storage`).
+
+##### 2.2: Upload Your Project Files
+
+On your **local computer**, prepare your project folder. You need to upload these five directories to the file share:
+  * `data/`
+  * `logs/`
+  * `potentials/`
+  * `scripts/`
+  * `src/`
+
+**Upload Steps:**
+1.  In the Azure Portal, navigate to your **Storage Account** → **File shares** → click on your share name.
+2.  Click the **"Upload"** button at the top.
+3.  **Drag and drop** the five folders listed above into the upload panel.
+4.  Wait for the upload to complete.
+
+##### 2.3: Verify the Structure
+
+After upload, your file share root should look like this:
+
+```
+<Your File Share Name> /
+├── data/
+│   ├── analysis_output/
+│   ├── raw_output/
+│   └── structures/
+├── logs/
+├── potentials/
+│   ├── NiTi.meam
+│   └── library.meam
+├── scripts/
+│   ├── run_all.sh
+│   ├── structure_gen.sh
+│   └── ...
+└── src/
+    ├── niti_np_gen.py
+    └── lmps/
+```
+
+**You do NOT need to upload:**
+- `all_dependencies.sh` (only used during Golden Image creation)
+- `README.md` (documentation, not needed by simulations)
+- `.git/` folder (version control, not needed by simulations)
+- `.devcontainer/` (Docker config, not used on Azure VMs)
+
+##### 2.4: Get the Mount Command
+
+1.  In the Azure Portal, while viewing your file share, click **"Connect"** at the top.
+2.  Select **"Linux"** as the OS.
+3.  Copy the provided `mount` command. It will look like:
+    ```bash
+    sudo mount -t cifs //yourstorage.file.core.windows.net/yourshare /workspace -o vers=3.0,username=yourstorage,password=YOUR_STORAGE_KEY,dir_mode=0777,file_mode=0777,serverino
+    ```
+4.  Save this command—you'll use it on every VM you launch.
+
+**What This Command Does:**
+- `mount -t cifs` — Connects to Azure storage using the SMB/CIFS protocol
+- `//yourstorage.file.core.windows.net/yourshare` — Your file share's network address
+- `/workspace` — The local directory where the share will appear on the VM
+- `-o vers=3.0,...` — Connection options (credentials, permissions)
+
+**Result:** After running this command, `/workspace/scripts/run_all.sh` on the VM actually reads from your Azure cloud storage, not from the VM's local disk.
 
 #### Step 3: Run Simulations in Parallel 🚀
 
@@ -248,20 +282,22 @@ This step saves you hours of setup time for every run. You do this **once**.
 **💸 Late-Night Optimization:** If running simulations late at night, remember: only storage costs matter. VM compute costs stop when you delete the VMs. Keep your Azure File Share for long-term data, but delete VMs immediately after jobs complete to minimize expenses.
 
 **VM Selection Tip (very important):** When selecting VMs for simulations, prioritize configurations with higher core counts over excessive RAM, as permanent storage handles data persistence. A golden VM image ensures quick setup, so focus on cores for parallel processing—32GB RAM is typically sufficient, and even 16GB may suffice in some cases, but never compromise on core availability.
-      * These VMs will boot in minutes, fully configured.
-  
+
 Now, whenever you need to run your study:
 
 1.  **Launch VMs:** Launch **3** (or more) new VMs.
       * **Image:** Under "Image," select **"My Images"** and choose your `rimuru-lammps-ubuntu-v1` image.
       * **Settings:** Use the same `Standard_F16s_v2`, **Spot Instance**, and **32GB P4** disk settings.
+
 2.  **Connect & Mount:**
       * Open a separate VS Code window (Remote-SSH) for each VM.
-      * In *each* VM's terminal, mount your shared storage (Azure provides the copy-paste command for this):
+      * In *each* VM's terminal, create the mount point and mount your shared storage using the command you saved earlier:
         ```bash
-        sudo mkdir /workspace
-        sudo mount -t cifs //yourstorage.file.core.windows.net/... /workspace
+        sudo mkdir -p /workspace
+        sudo mount -t cifs //yourstorage.file.core.windows.net/yourshare /workspace -o vers=3.0,username=yourstorage,password=YOUR_STORAGE_KEY,dir_mode=0777,file_mode=0777,serverino
         ```
+      * **Verify the mount:** Run `ls /workspace/scripts/` — you should see your `run_all.sh` and other scripts.
+
 3.  **Assign Jobs:**
       * **On VM 1:**
           * Copy the pipeline script locally: `cp /workspace/scripts/run_all.sh ~/run_vm1.sh`
@@ -275,8 +311,9 @@ Now, whenever you need to run your study:
           * Copy the script: `cp /workspace/scripts/run_all.sh ~/run_vm3.sh`
           * Edit `~/run_vm3.sh` to run *only* the 25nm files.
           * Run it: `bash ~/run_vm3.sh`
+
 4.  **Wait & Shut Down:**
-      * All VMs are now running in parallel, reading from and writing to your central `/workspace` storage.
+      * All VMs are now running in parallel, reading scripts from `/workspace` and writing results to `/workspace/data/raw_output/`.
       * When the jobs are finished, **Delete the VMs** to stop all costs. Your results are safe on the shared storage.
 
 ### 3\. Key Scripts and Usage
@@ -332,6 +369,7 @@ This saves only a few snapshots for figures, not thousands of frames for a video
 You **do not need an expensive 16-core VM** to run the compression script.
 
 Since the task is limited by storage I/O, a powerful CPU will just sit idle. You can save money by launching a cheap 2-core or 4-core VM just for this task. It will likely take the exact same amount of time (30-45 minutes) and cost you pennies.
+
 -----
 
 ## 4\. Data Analysis Workflow 📊
@@ -339,7 +377,7 @@ Since the task is limited by storage I/O, a powerful CPU will just sit idle. You
 You can analyze all your data in the cloud using VS Code's remote Jupyter capabilities.
 
 1.  **Keep One VM Running** (or launch a new one from your Golden Image).
-2.  **Connect** via VS Code Remote-SSH and **mount** your `/workspace` shared drive.
+2.  **Connect** via VS Code Remote-SSH and **mount** your `/workspace` shared drive using the mount command.
 3.  **Launch Jupyter:** In the VS Code terminal:
     ```bash
     jupyter notebook --no-browser --port=8888
@@ -372,5 +410,7 @@ You can analyze all your data in the cloud using VS Code's remote Jupyter capabi
 ## Troubleshooting
 
   * **LAMMPS errors**: Check that the potential files exist in [`/potentials`](./potentials) and are correctly referenced.
+  * **Mount failures**: Verify your storage key is correct. Run `df -h` to confirm `/workspace` appears in the mounted filesystems.
+  * **Permission errors**: If you can't write to `/workspace`, check the `dir_mode=0777,file_mode=0777` options in your mount command.
   * **Analysis failures**: You may need to adjust `ANALYSIS_CONFIG` parameters in the analysis notebooks (e.g., increase `WINDOW_LENGTH` for noisy data).
-  * **Azure Spot Eviction**: If a Spot VM is evicted (deallocated), your job will stop. Simply re-launch a new VM from your Golden Image, mount the storage, and re-run the script for the *missing* data. No results will be lost.
+  * **Azure Spot Eviction**: If a Spot VM is evicted (deallocated), your job will stop. Simply re-launch a new VM from your Golden Image, mount the storage, and re-run the script for the *missing* data. No results will be lost because everything is saved to the persistent Azure File Share.

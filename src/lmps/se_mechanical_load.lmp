@@ -51,7 +51,7 @@ thermo 1000
 thermo_style custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
 
 # Dump trajectory (FIXED: single line)
-dump 1 all custom 1000 ${output_dir}/tensile_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3]
+dump 1 all custom 5000 ${output_dir}/tensile_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3]
 dump_modify 1 sort id
 
 # ============================================

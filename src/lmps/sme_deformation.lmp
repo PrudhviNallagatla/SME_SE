@@ -52,7 +52,7 @@ shell mkdir -p ${output_dir}
 # Thermo, Dump, and Fix thermo_out sections
 thermo 1000
 thermo_style custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
-dump 1 all custom 2000 ${output_dir}/sme_*.dump id type x y z c_centro c_cna
+dump 1 all custom 5000 ${output_dir}/sme_*.dump id type x y z c_centro c_cna
 dump_modify 1 sort id
 fix thermo_out all print 100 "$(step) $(temp) $(pe) $(lx) $(ly) $(lz) $(pxx) $(pyy) $(pzz)" file ${output_dir}/sme_detailed.txt screen no title "# step temp pe lx ly lz pxx pyy pzz"
 
