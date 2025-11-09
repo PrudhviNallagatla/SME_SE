@@ -14,6 +14,7 @@
 #   cd /workspace && bash all_dependencies.sh
 #
 # Author: PrudhviNallagatla
+# Working Directory: /home/rimuru/workspace (WSL)
 ###############################################################################
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
@@ -59,6 +60,7 @@ if command -v lmp &> /dev/null || command -v lammps &> /dev/null; then
     sudo rm -f /usr/local/bin/lmp /usr/local/bin/lammps 2>/dev/null || true
     sudo rm -rf /usr/local/share/lammps 2>/dev/null || true
     sudo rm -rf /usr/local/lib/liblammps* 2>/dev/null || true
+    sudo rm -rf /usr/local/lib64/liblammps* 2>/dev/null || true
     sudo rm -rf /tmp/lammps 2>/dev/null || true
     
     # Remove Python LAMMPS interface
@@ -369,13 +371,51 @@ fi
 log "✓ LAMMPS installed"
 
 #==============================================================================
-# STEP 8: Install LAMMPS Python interface
+# FIX: Configure shared library path (CRITICAL FOR WSL)
 #==============================================================================
+log "Configuring shared library paths..."
+
+# Add /usr/local/lib to ld.so.conf if not already there
+if [ ! -f /etc/ld.so.conf.d/lammps.conf ]; then
+    echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/lammps.conf > /dev/null
+    echo "/usr/local/lib64" | sudo tee -a /etc/ld.so.conf.d/lammps.conf > /dev/null
+    log "  Added library paths to /etc/ld.so.conf.d/lammps.conf"
+fi
+
+# Update library cache
+sudo ldconfig
+
+# Verify library is found
+if ldconfig -p | grep -q liblammps.so; then
+    log "✓ liblammps.so registered in library cache"
+else
+    warn "liblammps.so not found in cache, trying manual path..."
+    # Try to find the library
+    LAMMPS_LIB=$(find /usr/local/lib* -name "liblammps.so*" 2>/dev/null | head -1)
+    if [ -n "$LAMMPS_LIB" ]; then
+        log "  Found library at: ${LAMMPS_LIB}"
+    else
+        error "LAMMPS library not found after installation!"
+    fi
+fi
+
+#==============================================================================
+# STEP 8: Install LAMMPS Python interface (OPTIONAL BUT RECOMMENDED)
+#==============================================================================
+# Python interface is VERY useful for:
+# - Scripting complex simulations
+# - Post-processing analysis
+# - Automated parameter sweeps
+# - Integration with Jupyter notebooks
+# - Using ASE, Ovito, and other Python tools with LAMMPS
+#==============================================================================
+
 log "[8/8] Installing LAMMPS Python interface..."
 cd ../python
 
 if ! pip3 install --break-system-packages --no-cache-dir . > /tmp/lammps_python.log 2>&1; then
     warn "LAMMPS Python interface installation failed (check /tmp/lammps_python.log)"
+    warn "This is OPTIONAL - LAMMPS CLI will still work perfectly"
 else
     log "✓ LAMMPS Python interface installed"
 fi
@@ -390,6 +430,14 @@ if ! command -v lmp &> /dev/null; then
     error "LAMMPS binary not found in PATH"
 fi
 
+# Test if lmp runs without library errors
+log "Testing LAMMPS binary..."
+if lmp -help > /dev/null 2>&1; then
+    log "✓ LAMMPS binary runs successfully"
+else
+    error "LAMMPS binary has errors - check library paths"
+fi
+
 # Check version
 LAMMPS_VERSION=$(lmp -help 2>&1 | grep "LAMMPS" | head -1)
 log "✓ ${LAMMPS_VERSION}"
@@ -398,7 +446,7 @@ log "✓ ${LAMMPS_VERSION}"
 if python3 -c "from lammps import lammps; lammps()" &> /dev/null; then
     log "✓ LAMMPS Python interface working"
 else
-    warn "LAMMPS Python interface not working (non-critical)"
+    warn "LAMMPS Python interface not working (OPTIONAL - CLI works fine)"
 fi
 
 # Check key packages
@@ -423,6 +471,9 @@ log "Setting up environment..."
 if ! grep -q "# LAMMPS aliases" ~/.bashrc 2>/dev/null; then
     cat >> ~/.bashrc << 'EOF'
 
+# LAMMPS environment
+export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
+
 # LAMMPS aliases
 alias lammps='lmp'
 alias lmp-serial='lmp'
@@ -435,11 +486,17 @@ alias ipy='ipython'
 
 # Analysis aliases
 alias ovito='ovito'
+
+# Workspace shortcut (WSL specific)
+alias workspace='cd /home/rimuru/workspace'
 EOF
-    log "✓ Aliases added to ~/.bashrc"
+    log "✓ Aliases and environment added to ~/.bashrc"
 else
     log "✓ Aliases already exist in ~/.bashrc"
 fi
+
+# Source the updated bashrc for current session
+export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:$LD_LIBRARY_PATH
 
 #==============================================================================
 # FINAL REPORT
@@ -449,6 +506,7 @@ echo "=========================================="
 echo -e "${GREEN}✓ INSTALLATION COMPLETE${NC}"
 echo "=========================================="
 echo "Environment: ${ENV_TYPE}"
+echo "Working Dir: /home/rimuru/workspace"
 echo "LAMMPS:      $(lmp -help 2>&1 | grep "LAMMPS" | head -1)"
 echo "Python:      $(python3 --version)"
 echo "Cores:       ${NPROC}"
@@ -474,9 +532,20 @@ fi
 echo "=========================================="
 echo ""
 echo "Quick start:"
+echo "  cd /home/rimuru/workspace"
 echo "  lmp -in your_script.lmp"
 echo "  mpirun -np ${NPROC} lmp -in your_script.lmp"
 echo "  python3 your_analysis.py"
+echo ""
+echo "Library paths configured:"
+echo "  /usr/local/lib"
+echo "  /usr/local/lib64"
+echo ""
+echo "To use in new terminal sessions:"
+echo "  source ~/.bashrc"
+echo ""
+echo "Test installation:"
+echo "  lmp -help"
 echo ""
 echo "Installed Python packages:"
 pip3 list 2>/dev/null | grep -E "numpy|scipy|matplotlib|ovito|ase|MDAnalysis|freud" || echo "  (list error, but packages installed)"
@@ -485,6 +554,6 @@ echo "LAMMPS packages:"
 lmp -help 2>&1 | grep -A50 "Installed packages" | head -20
 echo ""
 if [ "${ENV_TYPE}" = "WSL" ]; then
-    echo "WSL Note: Restart your shell or run: source ~/.bashrc"
+    echo -e "${YELLOW}WSL Note:${NC} Restart your shell or run: ${GREEN}source ~/.bashrc${NC}"
 fi
 echo "=========================================="
