@@ -197,35 +197,23 @@ log "✓ Python packages installed"
 # Atomsk is ESSENTIAL for creating grain boundaries and polycrystalline structures
 # The automated download often fails due to server issues.
 #
-# MANUAL INSTALLATION STEPS:
-# --------------------------
-# 1. Visit: https://atomsk.univ-lille.fr/install.php
-# 
-# 2. Download the latest Linux binary:
-#    wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz
-#    (or use your browser if wget fails)
+# MANUAL INSTALLATION STEPS: Compile from source
 #
-# 3. Extract and install:
-#    tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz
-#    sudo mv atomsk /usr/local/bin/
-#    sudo chmod +x /usr/local/bin/atomsk
+#    git clone https://github.com/pierrehirel/atomsk.git
+#    cd atomsk/src
+#    make atomsk
+#    sudo make install
 #
-# 4. Verify installation:
+# 2. Verify installation:
 #    atomsk --version
 #    atomsk --help
 #
-# 5. Test polycrystal creation:
+# 3. Test polycrystal creation:
 #    atomsk --create fcc 4.05 Al aluminum.xsf
 #    atomsk --polycrystal aluminum.xsf polycrystal.cfg -wrap
 #
 # ALTERNATIVE: Install via Conda (if available):
 #    conda install -c conda-forge atomsk
-#
-# ALTERNATIVE: Compile from source:
-#    git clone https://github.com/pierrehirel/atomsk.git
-#    cd atomsk/src
-#    make atomsk
-#    sudo cp atomsk /usr/local/bin/
 #
 # For Docker: Add this to your Dockerfile AFTER this script runs:
 #    RUN wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz && \
