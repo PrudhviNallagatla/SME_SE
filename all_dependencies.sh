@@ -135,18 +135,18 @@ log "✓ System dependencies installed"
 log "[4/8] Installing Python scientific packages..."
 
 # Upgrade pip first
-pip3 install --no-cache-dir --upgrade pip setuptools wheel
+pip3 install --break-system-packages --no-cache-dir --upgrade pip setuptools wheel
 
 # Install packages in batches to avoid memory issues
 log "  Installing core scientific stack..."
-pip3 install --no-cache-dir \
+pip3 install --break-system-packages --no-cache-dir \
     numpy \
     scipy \
     matplotlib \
     pandas
 
 log "  Installing molecular dynamics tools..."
-pip3 install --no-cache-dir \
+pip3 install --break-system-packages --no-cache-dir \
     ase \
     ovito \
     MDAnalysis \
@@ -154,7 +154,7 @@ pip3 install --no-cache-dir \
     freud-analysis
 
 log "  Installing analysis and utilities..."
-pip3 install --no-cache-dir \
+pip3 install --break-system-packages --no-cache-dir \
     jupyter \
     jupyterlab \
     ipykernel \
@@ -168,7 +168,7 @@ pip3 install --no-cache-dir \
     scikit-learn
 
 log "  Installing advanced tools..."
-pip3 install --no-cache-dir \
+pip3 install --break-system-packages --no-cache-dir \
     lmfit \
     statsmodels \
     sympy \
