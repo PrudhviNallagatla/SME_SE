@@ -9,7 +9,7 @@ PROJECT_ROOT="/home/rimuru/workspace"  # Windows path (Git Bash compatible)
 SEED=42
 
 SIZE=20           # Diameter in nm
-SHAPE="blob"      # sphere, blob, rough, faceted, or ellipsoid
+SHAPE="sphere"      # sphere, blob, rough, faceted, or ellipsoid
 NI_PERCENT=50.0   # Ni percentage (45-55 typical for NiTi)
 
 # CPU CORES (NEW: -1 = use all available cores)

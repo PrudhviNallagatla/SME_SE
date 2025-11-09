@@ -591,9 +591,11 @@ class NiTiNanoparticleASE:
             print(
                 f"  Average grain diameter:  {avg_grain_diameter_nm:.2f} ± {std_grain_diameter_nm:.2f} nm"
             )
-            print(f"  Min grain diameter:      {min(grain_diameters_nm):.2f} nm")
-            print(f"  Max grain diameter:      {max(grain_diameters_nm):.2f} nm")
-
+            if grain_diameters_nm:  # Check if list is not empty
+                print(f"  Min grain diameter:      {min(grain_diameters_nm):.2f} nm")
+                print(f"  Max grain diameter:      {max(grain_diameters_nm):.2f} nm")
+            else:
+                print(f"  ⚠ Could not calculate grain diameter range (no valid grains)")
         print(f"\nGrain Size Distribution (by atom count):")
         for i, size in enumerate(grain_sizes):
             print(f"  Grain {i+1}: {size:5d} atoms ({100*size/len(positions):5.1f}%)")
