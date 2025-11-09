@@ -188,27 +188,76 @@ pip3 install --break-system-packages --no-cache-dir \
 log "✓ Python packages installed"
 
 #==============================================================================
-# STEP 5: Install Atomsk (for grain boundaries)
+# STEP 5: Install Atomsk (CRITICAL for polycrystalline structures)
 #==============================================================================
-log "[5/8] Installing Atomsk (polycrystalline structure tool)..."
-cd /tmp
+# ⚠️  ATOMSK MUST BE INSTALLED MANUALLY ⚠️
+#
+# Atomsk is ESSENTIAL for creating grain boundaries and polycrystalline structures
+# The automated download often fails due to server issues.
+#
+# MANUAL INSTALLATION STEPS:
+# --------------------------
+# 1. Visit: https://atomsk.univ-lille.fr/install.php
+# 
+# 2. Download the latest Linux binary:
+#    wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz
+#    (or use your browser if wget fails)
+#
+# 3. Extract and install:
+#    tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz
+#    sudo mv atomsk /usr/local/bin/
+#    sudo chmod +x /usr/local/bin/atomsk
+#
+# 4. Verify installation:
+#    atomsk --version
+#    atomsk --help
+#
+# 5. Test polycrystal creation:
+#    atomsk --create fcc 4.05 Al aluminum.xsf
+#    atomsk --polycrystal aluminum.xsf polycrystal.cfg -wrap
+#
+# ALTERNATIVE: Install via Conda (if available):
+#    conda install -c conda-forge atomsk
+#
+# ALTERNATIVE: Compile from source:
+#    git clone https://github.com/pierrehirel/atomsk.git
+#    cd atomsk/src
+#    make atomsk
+#    sudo cp atomsk /usr/local/bin/
+#
+# For Docker: Add this to your Dockerfile AFTER this script runs:
+#    RUN wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz && \
+#        tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz && \
+#        mv atomsk /usr/local/bin/ && \
+#        chmod +x /usr/local/bin/atomsk && \
+#        rm atomsk_b0.13.1_Linux-x86-64.tar.gz
+#
+#==============================================================================
 
-if ! wget -q --show-progress https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz; then
-    warn "Atomsk download failed (network issue). Skipping..."
+log "[5/8] Atomsk installation SKIPPED - requires manual installation"
+warn "═══════════════════════════════════════════════════════════════"
+warn "  ⚠️  ATOMSK MUST BE INSTALLED MANUALLY FOR POLYCRYSTALS  ⚠️"
+warn "═══════════════════════════════════════════════════════════════"
+warn ""
+warn "Quick install (run after this script completes):"
+warn ""
+warn "  cd /tmp"
+warn "  wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz"
+warn "  tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz"
+warn "  sudo mv atomsk /usr/local/bin/"
+warn "  sudo chmod +x /usr/local/bin/atomsk"
+warn "  atomsk --version"
+warn ""
+warn "Official docs: https://atomsk.univ-lille.fr/doc/en/"
+warn "═══════════════════════════════════════════════════════════════"
+warn ""
+
+# Check if Atomsk already exists (from previous manual install)
+if command -v atomsk &> /dev/null; then
+    log "✓ Atomsk already installed: $(atomsk --version 2>&1 | head -1)"
 else
-    tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz
-    sudo cp atomsk /usr/local/bin/
-    sudo chmod +x /usr/local/bin/atomsk
-    rm -rf atomsk_b0.13.1_Linux-x86-64.tar.gz atomsk
-    
-    if command -v atomsk &> /dev/null; then
-        log "✓ Atomsk installed: $(atomsk --version | head -1)"
-    else
-        warn "Atomsk installation failed (optional)"
-    fi
+    warn "Atomsk NOT found - remember to install manually!"
 fi
-
-cd -
 
 #==============================================================================
 # STEP 6: Download LAMMPS
@@ -325,7 +374,7 @@ log "✓ LAMMPS installed"
 log "[8/8] Installing LAMMPS Python interface..."
 cd ../python
 
-if ! pip3 install --no-cache-dir . > /tmp/lammps_python.log 2>&1; then
+if ! pip3 install --break-system-packages --no-cache-dir . > /tmp/lammps_python.log 2>&1; then
     warn "LAMMPS Python interface installation failed (check /tmp/lammps_python.log)"
 else
     log "✓ LAMMPS Python interface installed"
@@ -403,6 +452,25 @@ echo "Environment: ${ENV_TYPE}"
 echo "LAMMPS:      $(lmp -help 2>&1 | grep "LAMMPS" | head -1)"
 echo "Python:      $(python3 --version)"
 echo "Cores:       ${NPROC}"
+echo "=========================================="
+echo ""
+
+# Check Atomsk status
+if command -v atomsk &> /dev/null; then
+    echo -e "${GREEN}✓ Atomsk:     $(atomsk --version 2>&1 | head -1)${NC}"
+else
+    echo -e "${RED}✗ Atomsk:     NOT INSTALLED${NC}"
+    echo ""
+    echo -e "${YELLOW}⚠️  INSTALL ATOMSK MANUALLY FOR POLYCRYSTAL WORK:${NC}"
+    echo ""
+    echo "  cd /tmp"
+    echo "  wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz"
+    echo "  tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz"
+    echo "  sudo mv atomsk /usr/local/bin/"
+    echo "  sudo chmod +x /usr/local/bin/atomsk"
+    echo ""
+fi
+
 echo "=========================================="
 echo ""
 echo "Quick start:"
