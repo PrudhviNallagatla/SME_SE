@@ -79,16 +79,16 @@ sudo apt-get install -y --no-install-recommends \
     zlib1g-dev \
     libgsl-dev
 
-# Install Python packages
+
 echo ""
 echo "[3/6] Installing Python scientific packages..."
-pip3 install --no-cache-dir --upgrade pip
-pip3 install --no-cache-dir \
+pip3 install --break-system-packages --no-cache-dir --upgrade pip  # remove the --break-system-packages flag if not working
+pip3 install --break-system-packages --no-cache-dir \
     numpy \
     scipy \
     matplotlib \
     pandas \
-    ovito==3.9.1 \
+    ovito \
     ase \
     jupyter \
     jupyterlab \

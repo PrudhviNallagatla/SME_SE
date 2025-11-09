@@ -171,7 +171,7 @@ This step saves you hours of setup time for every run. You do this **once**.
 
 1.  **Launch the Base VM:**
       * **Image:** Ubuntu Server 22.04 LTS
-      * **Size:** `Standard_F16s_v2` (16 cores, 32GB RAM)
+      * **Size:** `Standard_F4s_v2` (4 cores, 8GB RAM)
       * **Pricing:** **Azure Spot Instance** (set eviction to "Deallocate")
       * **Username:** e.g., `rimuru`
       * **OS Disk:** **32 GB Premium SSD (P4)**

@@ -6,14 +6,13 @@
 clear
 units metal
 dimension 3
-boundary s s s
+boundary s s s  # ✓ Correct for nanoparticles
 atom_style atomic
 
 read_data ${structure_file}
 
 # MEAM potential for NiTi
 pair_style meam
-# FIXED: Use variables for portable potential paths
 pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
 neighbor 2.0 bin
@@ -24,18 +23,22 @@ compute pe all pe/atom
 compute ke all ke/atom
 compute stress all stress/atom NULL
 
+# **IMPROVEMENT**: Add centro-symmetry for defect detection
+compute csym all centro/atom fcc  # For B2 structure analysis
+
 thermo 100
 thermo_style custom step temp pe ke etotal press vol lx ly lz
 
 shell mkdir -p ${output_dir}
 
 # Dump initial structure
-dump 1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
+dump 1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym
 dump_modify 1 sort id
 run 0
 undump 1
 
-# Tighter convergence
+# **CRITICAL FIX**: Use FIRE minimizer for nanoparticles (better than CG)
+min_style fire
 minimize 1.0e-8 1.0e-10 10000 50000
 
 # Save minimized structure
@@ -43,7 +46,7 @@ write_data ${output_dir}/minimized.data
 write_restart ${output_dir}/minimized.restart
 
 # Dump final structure
-dump 2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3]
+dump 2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym
 dump_modify 2 sort id
 run 0
 undump 2
@@ -54,11 +57,17 @@ variable final_press equal press
 variable final_lx equal lx
 variable final_ly equal ly
 variable final_lz equal lz
+variable natoms equal atoms
+
+# **IMPROVEMENT**: Calculate average per-atom energy
+variable final_pe_per_atom equal v_final_pe/v_natoms
 
 print "=========================================="
 print "MINIMIZATION COMPLETE"
 print "=========================================="
-print "Final PE:       ${final_pe} eV"
-print "Final Pressure: ${final_press} bar"
-print "Box size:       ${final_lx} x ${final_ly} x ${final_lz} Å"
+print "Final PE:           ${final_pe} eV"
+print "Final PE/atom:      ${final_pe_per_atom} eV"
+print "Final Pressure:     ${final_press} bar"
+print "Box size:           ${final_lx} x ${final_ly} x ${final_lz} Å"
+print "Number of atoms:    ${natoms}"
 print "=========================================="
