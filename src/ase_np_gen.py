@@ -442,21 +442,27 @@ class NiTiNanoparticleASE:
             positions[i : i + chunk_size] for i in range(0, len(positions), chunk_size)
         ]
 
+        # FIX: Use partial to bind grain_centers to worker function
+        worker_func = partial(_assign_grains_worker, grain_centers=grain_centers)
+
         with mp.Pool(processes=self.n_cores) as pool:
             results = list(
                 tqdm(
-                    pool.imap(_assign_grains_worker, chunks),
+                    pool.imap(worker_func, chunks),
                     total=len(chunks),
                     desc="Assigning grains",
                 )
             )
+
+        # FIX: Concatenate results from all chunks
+        grain_assignments = np.concatenate(results)
 
         # Store grain rotations
         self.grain_rotations = []
 
         # Apply random rotation to each grain
         for grain_id in range(actual_n_grains):
-            grain_mask = results == grain_id
+            grain_mask = grain_assignments == grain_id
             grain_atoms = positions[grain_mask]
 
             if len(grain_atoms) == 0:
@@ -474,7 +480,7 @@ class NiTiNanoparticleASE:
 
         # PARALLELIZED: Grain boundary analysis
         self._analyze_grain_boundaries_voronoi_parallel(
-            results, grain_centers, actual_n_grains
+            grain_assignments, grain_centers, actual_n_grains
         )
 
     def _analyze_grain_boundaries_voronoi_parallel(
@@ -489,23 +495,20 @@ class NiTiNanoparticleASE:
         # FIX: Calculate grain sizes BEFORE use
         grain_sizes = [np.sum(grain_assignments == i) for i in range(n_grains)]
 
-        # PARALLELIZED: Neighbor detection
+        # FIX: Use optimized worker to reduce memory overhead
         chunk_size = max(1000, len(positions) // (self.n_cores * 4))
-        chunks = []
-        for i in range(0, len(positions), chunk_size):
-            chunks.append(
-                (
-                    positions[i : i + chunk_size],
-                    positions,
-                    grain_assignments[i : i + chunk_size],
-                    grain_assignments,
-                    neighbor_cutoff,
-                    i,  # offset for indexing
-                )
-            )
+        chunk_indices = [
+            list(range(i, min(i + chunk_size, len(positions))))
+            for i in range(0, len(positions), chunk_size)
+        ]
+
+        chunks = [
+            (indices, positions, grain_assignments, neighbor_cutoff)
+            for indices in chunk_indices
+        ]
 
         with mp.Pool(processes=self.n_cores) as pool:
-            results = pool.map(_detect_gb_atoms_worker, chunks)
+            results = pool.map(_detect_gb_atoms_worker_optimized, chunks)
 
         # Combine results
         gb_atom_indices = []
@@ -975,7 +978,10 @@ def _detect_gb_atoms_worker(args):
 
         if np.any(neighbor_grains != my_grain):
             gb_indices.append(offset + i)
-            # Could compute thickness here if needed
+            # FIX: Actually calculate thickness
+            neighbor_distances = distances[neighbors & (all_grains != my_grain)]
+            if len(neighbor_distances) > 0:
+                gb_thicknesses.append(np.min(neighbor_distances))
 
     return gb_indices, gb_thicknesses
 
