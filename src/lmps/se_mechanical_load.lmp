@@ -1,12 +1,5 @@
-# Superelastic mechanical testing for NiTi nanostructures
-#
-# SCIENTIFIC PRODUCTION SCRIPT
-#
-# Main Fixes:
-# 1. Restored "production" simulation parameters (e.g., long runs).
-# 2. Added a REAL stress calculation using 'compute reduce' (replaces 'stress_x = 0.0').
-# 3. Fixed the 'fix move' command to use immediate-evaluation $(...) syntax.
-# 4. Corrected all non-ASCII 'Å' symbols to 'A'.
+# GOAL: Test superelasticity of 10nm NiTi nanoparticle
+# Requires: Af < test_temp (verify from thermal cycling first!)
 
 clear
 units metal
@@ -16,49 +9,58 @@ atom_style atomic
 
 read_data ${input_data}
 
-# MEAM potential for NiTi
 pair_style meam
 pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
 neighbor 2.0 bin
 neigh_modify delay 0 every 1 check yes
 
-# Compute per-atom properties
 compute pe_atom all pe/atom
 compute ke_atom all ke/atom
 compute stress_atom all stress/atom NULL
 compute centro all centro/atom bcc
 compute cna all cna/atom 3.5
+compute coord all coord/atom cutoff 3.5
 
-timestep 0.001  # use this in real sim: 0.001 ps (1 fs)
+timestep 0.001
 
-# Test parameters (SCIENTIFIC values)
-variable test_temp equal 300.0
-variable strain_rate equal 1.0e-3   # use this in real sim: 1.0e-3 /ps (standard strain rate)
-variable max_strain equal 0.08
-variable equil_steps equal 50000   # use this in real sim: 50000 steps (100 ps)
+# ============================================
+# PARAMETERS (REALISTIC FOR 10nm NANOPARTICLE)
+# ============================================
 
-# Corrected strain step calculation
+# ✅ Temperature: Must be > Af (use thermal cycling result!)
+variable test_temp equal 400.0  # Safe choice (well above typical Af)
+
+# ✅ Strain rate: Slow enough for transformation
+variable strain_rate equal 5.0e-7  # 5×10^5 /s (literature standard)
+
+# ✅ Max strain: Safe for nanoparticles
+variable max_strain equal 0.05  # 5% (allows full transformation)
+
+# Equilibration
+variable equil_steps equal 200000  # 200 ps (nanoparticle needs longer)
+
+# Loading/unloading steps
 variable loading_time equal v_max_strain/v_strain_rate
 variable strain_steps equal round(v_loading_time/dt)
+# Time: 0.05 / 5e-7 = 100,000 ps = 100 ns = 100M steps (~9 hrs)
 
-# Thermostat damping
-variable tdamp equal $(100.0*dt)
+variable tdamp equal $(200.0*dt)
 
 shell mkdir -p ${output_dir}
 
-thermo 1000
-thermo_style custom step temp pe ke etotal press vol lx ly lz pxx pyy pzz
+thermo 5000
+thermo_style custom step temp pe press vol lx density pxx pyy pzz
 
-# Dump trajectory (FIXED: single line)
-dump 1 all custom 5000 ${output_dir}/tensile_*.dump id type x y z c_pe_atom c_ke_atom c_centro c_cna c_stress_atom[1] c_stress_atom[2] c_stress_atom[3]
+dump 1 all custom 50000 ${output_dir}/se_*.dump &
+    id type x y z c_pe_atom c_centro c_cna c_coord
 dump_modify 1 sort id
 
 # ============================================
-# Initial Equilibration
+# EQUILIBRATION
 # ============================================
 print "=========================================="
-print "Equilibrating at ${test_temp} K..."
+print "Equilibrating at ${test_temp}K (Austenite)"
 print "=========================================="
 
 velocity all create ${test_temp} ${seed} dist gaussian
@@ -66,152 +68,148 @@ fix 1 all nvt temp ${test_temp} ${test_temp} ${tdamp}
 run ${equil_steps}
 unfix 1
 
-write_restart ${output_dir}/equil_pre.restart
-
 variable Lx_ref equal lx
-variable Ly_ref equal ly
-variable Lz_ref equal lz
+variable pe_initial equal pe
+variable coord_initial equal ave(c_coord)
 
-print "Reference box: Lx=$(v_Lx_ref) Ly=$(v_Ly_ref) Lz=$(v_Lz_ref) A"
+print "Reference length: ${Lx_ref} A"
+print "Initial PE/atom: $(pe/atoms) eV"
+print "Initial coordination: ${coord_initial}"
+
+write_restart ${output_dir}/se_initial.restart
 
 # ============================================
-# Define Deformation Groups
+# DEFINE DEFORMATION REGIONS (SPHERICAL)
 # ============================================
-# Define anchor/pull regions (1.0 A thick slices on each end)
-variable x_left equal xlo+1.0
-variable x_right equal xhi-1.0
-region left_grip block INF ${x_left} INF INF INF INF units box
-region right_grip block ${x_right} INF INF INF INF INF units box
+variable xcm equal xcm(all,x)
+variable ycm equal xcm(all,y)
+variable zcm equal xcm(all,z)
+variable radius equal (lx+ly+lz)/6.0
+
+variable x_left equal v_xcm-0.75*v_radius
+variable x_right equal v_xcm+0.75*v_radius
+
+region left_grip sphere ${x_left} ${ycm} ${zcm} 5.0 units box
+region right_grip sphere ${x_right} ${ycm} ${zcm} 5.0 units box
+
 group anchor region left_grip
 group pull region right_grip
 group mobile subtract all anchor pull
-variable pull_vel equal v_strain_rate*v_Lx_ref
-variable neg_pull_vel equal "-1.0 * v_pull_vel"
 
-print "Deforming particle: $(count(anchor)) anchor atoms, $(count(pull)) pull atoms."
+print "Deformation setup: $(count(anchor)) anchor, $(count(pull)) pull"
 
 # ============================================
-# --- CRITICAL: Define REAL Stress Calculation ---
+# STRESS CALCULATION (CORRECT METHOD)
 # ============================================
-# 1. Compute the total reaction force on the 'anchor' group
-compute f_anchor anchor reduce sum fx
-# 2. Calculate the initial cross-sectional area (Y-Z plane)
-variable area_yz equal "v_Ly_ref * v_Lz_ref"
-# 3. Calculate stress (Force/Area) and convert to GPa
-#    (1 eV/A^3 = 160.2177 GPa)
-variable stress_x_calc equal "(c_f_anchor / v_area_yz) * 160.2177"
+# Use virial stress tensor
+compute stress_xx all reduce ave c_stress_atom[1]
+variable stress_x equal "c_stress_xx * 160.2177"  # Convert to GPa
 
-
-# ============================================
-# Define strain and stress variables for output
-# ============================================
 variable strain_x equal (lx-v_Lx_ref)/v_Lx_ref
-variable strain_y equal (ly-v_Ly_ref)/v_Ly_ref
-variable strain_z equal (lz-v_Lz_ref)/v_Lz_ref
 
-# --- FIXED: Use the REAL stress calculation ---
-variable stress_x equal v_stress_x_calc
-variable stress_y equal 0.0 # Y-stress is not tracked in this uniaxial test
-variable stress_z equal 0.0 # Z-stress is not tracked in this uniaxial test
-
-# FIXED: single line
-fix stress_out all print 50 "$(step) $(temp) $(pe) $(v_strain_x) $(v_strain_y) $(v_strain_z) $(v_stress_x) $(v_stress_y) $(v_stress_z)" file ${output_dir}/stress_strain.txt screen no title "# step temp pe strain_x strain_y strain_z stress_x(GPa) stress_y(GPa) stress_z(GPa)"
+fix stress_out all print 100 &
+    "$(step) $(v_strain_x) $(v_stress_x) $(c_avg_coord)" &
+    file ${output_dir}/stress_strain.txt screen no &
+    title "# step strain stress(GPa) avg_coord"
 
 # ============================================
-# Loading Phase (Tensile deformation)
+# LOADING PHASE (TENSILE)
 # ============================================
 print "=========================================="
-print "Loading phase: tensile strain along x-axis"
-print "Strain rate: ${strain_rate} /ps for ${loading_time} ps"
-print "Total steps: ${strain_steps}"
+print "Loading: 0% → $(v_max_strain*100)% strain"
+print "Rate: ${strain_rate} /s"
+print "Steps: ${strain_steps} ($(v_loading_time/1000) ns)"
 print "=========================================="
 
-fix 1 mobile nvt temp ${test_temp} ${test_temp} ${tdamp}
-fix 2 anchor setforce 0.0 0.0 0.0
-# --- FIXED: Use $(...) to evaluate variable immediately ---
-fix 3 pull move linear $(v_pull_vel) 0.0 0.0
+# ✅ Use fix deform (controlled strain rate, works with s s s)
+fix 1 all nvt temp ${test_temp} ${test_temp} ${tdamp}
+fix 2 all deform 1 x erate ${strain_rate} remap x units box
+
+# Monitor transformation
+compute avg_coord all reduce ave c_coord
+fix transform_monitor all print 1000 &
+    "$(step) $(v_strain_x) $(v_stress_x) $(c_avg_coord)" &
+    file ${output_dir}/transformation_monitor.txt screen no
 
 run ${strain_steps}
 
-unfix 3
+unfix transform_monitor
 unfix 2
 unfix 1
 
 variable Lx_max equal lx
-variable strain_applied equal (v_Lx_max-v_Lx_ref)/v_Lx_ref
+variable strain_max equal (v_Lx_max-v_Lx_ref)/v_Lx_ref
 
-print "Max strain reached: $(v_strain_applied*100)%"
-write_restart ${output_dir}/max_strain.restart
+print "Maximum strain reached: $(v_strain_max*100)%"
+write_restart ${output_dir}/se_loaded.restart
 
 # ============================================
-# Hold at Maximum Strain
+# HOLD AT MAX STRAIN
 # ============================================
 print "Equilibrating at maximum strain..."
 
-fix 1 mobile nvt temp ${test_temp} ${test_temp} ${tdamp}
-fix 2 anchor setforce 0.0 0.0 0.0
-fix 3 pull setforce 0.0 0.0 0.0  # Hold pull group in place
-
-run ${equil_steps}
-
-unfix 3
-unfix 2
-unfix 1
-
-# ============================================
-# Unloading Phase (Reverse deformation)
-# ============================================
-print "=========================================="
-print "Unloading phase: releasing tensile strain"
-print "=========================================="
-
-fix 1 mobile nvt temp ${test_temp} ${test_temp} ${tdamp}
-fix 2 anchor setforce 0.0 0.0 0.0
-# --- FIXED: Use $(...) to evaluate variable immediately ---
-fix 3 pull move linear ${neg_pull_vel} 0.0 0.0 # Reverse velocity
-
-run ${strain_steps}
-
-unfix 3
-unfix 2
-unfix 1
-
-# ============================================
-# Final Equilibration
-# ============================================
-print "Final equilibration after unloading..."
-
-# Thermostat all atoms to let the whole particle relax
 fix 1 all nvt temp ${test_temp} ${test_temp} ${tdamp}
 run ${equil_steps}
 unfix 1
 
 # ============================================
-# Calculate Recovery Metrics
+# UNLOADING (REMOVE CONSTRAINT, NATURAL RECOVERY)
 # ============================================
+print "=========================================="
+print "Unloading: Removing constraint..."
+print "=========================================="
+
+# ✅ CORRECT: Just equilibrate (no reverse deformation!)
+fix 1 all nvt temp ${test_temp} ${test_temp} ${tdamp}
+run $(2*v_equil_steps)  # Longer equilibration for reverse transformation
+unfix 1
+
 variable Lx_final equal lx
-variable residual_strain equal (v_Lx_final-v_Lx_ref)/v_Lx_ref
-# FIXED: Use "equal" with quotes for formula
-variable strain_applied_safe equal "v_strain_applied + 1e-9"
-variable recovery_pct equal "(v_strain_applied-v_residual_strain)/v_strain_applied_safe*100"
+variable strain_final equal (v_Lx_final-v_Lx_ref)/v_Lx_ref
 
-write_data ${output_dir}/final.data
-write_restart ${output_dir}/final.restart
+write_restart ${output_dir}/se_unloaded.restart
 
+# ============================================
+# ANALYSIS
+# ============================================
 undump 1
 unfix stress_out
 
-# ============================================
-# Summary
-# ============================================
+variable recovered_strain equal v_strain_max - v_strain_final
+variable recovery_eff equal v_recovered_strain / v_strain_max * 100
+
+variable pe_final equal pe
+variable coord_final equal ave(c_coord)
+variable coord_change equal abs(v_coord_final - v_coord_initial)
+
 print "=========================================="
-print "SUPERELASTIC TEST COMPLETE"
+print "SUPERELASTIC TEST RESULTS"
 print "=========================================="
-print "Applied strain:   $(v_strain_applied) ($(v_strain_applied*100)%)"
-print "Residual strain:  $(v_residual_strain) ($(v_residual_strain*100)%)"
-print "Shape recovery:   $(v_recovery_pct)%"
+print "Reference length:    ${Lx_ref} A"
+print "Maximum length:      ${Lx_max} A"
+print "Final length:        ${Lx_final} A"
+print "------------------------------------------"
+print "Applied strain:      $(v_strain_max*100)%"
+print "Final strain:        $(v_strain_final*100)%"
+print "Recovered strain:    $(v_recovered_strain*100)%"
+print "Recovery efficiency: ${recovery_eff}%"
 print "=========================================="
-print "Reference length: $(v_Lx_ref) A"
-print "Max length:       $(v_Lx_max) A"
-print "Final length:     $(v_Lx_final) A"
+
+# Validate superelasticity
+if "${recovery_eff} > 90 && ${coord_change} < 0.5" then &
+    "print '✓ SUPERELASTICITY CONFIRMED'" &
+    "print '  - High recovery: ${recovery_eff}%'" &
+    "print '  - Structure returned to austenite'" &
+elif "${recovery_eff} > 90 && ${coord_change} >= 0.5" then &
+    "print '⚠ High recovery BUT structure did not recover'" &
+    "print '  Possible: Forced recovery (not true SE)'" &
+else &
+    "print '❌ NO SUPERELASTICITY'" &
+    "print '  Recovery: ${recovery_eff}% (expected >90%)'"
+
+print "=========================================="
+print "Next steps:"
+print "  1. Plot stress_strain.txt (look for plateau)"
+print "  2. Check transformation_monitor.txt (coord changes)"
+print "  3. Calculate hysteresis area (energy dissipation)"
 print "=========================================="

@@ -31,13 +31,8 @@ import os
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
-
-# REMOVE Windows-specific environment variable setting (lines 27-30)
-# These should be set in the actual execution environment, not at import time
-# DELETE THESE LINES:
-# os.environ["OMP_NUM_THREADS"] = str(mp.cpu_count())
-# os.environ["MKL_NUM_THREADS"] = str(mp.cpu_count())
-# os.environ["OPENBLAS_NUM_THREADS"] = str(mp.cpu_count())
+from threadpoolctl import threadpool_limits
+from datetime import datetime
 
 
 class NiTiNanoparticleASE:
@@ -99,11 +94,6 @@ class NiTiNanoparticleASE:
             self.n_cores = mp.cpu_count()
         else:
             self.n_cores = max(1, n_cores)
-
-        # LINUX: Set threading environment variables here (not at module level)
-        os.environ["OMP_NUM_THREADS"] = str(self.n_cores)
-        os.environ["MKL_NUM_THREADS"] = str(self.n_cores)
-        os.environ["OPENBLAS_NUM_THREADS"] = str(self.n_cores)
 
         print(f"  Using {self.n_cores} CPU cores for parallel processing")
 
@@ -427,13 +417,15 @@ class NiTiNanoparticleASE:
 
     def _create_polycrystalline_voronoi(self, n_grains: int):
         """
-        Improved Voronoi-based polycrystalline generation with MULTIPROCESSING
+        ✅ MEMORY-EFFICIENT: Uses KDTree instead of cdist for overlap detection
         """
+        from scipy.spatial import cKDTree
+
         positions = self.atoms.get_positions()
         grain_centers = self._generate_volume_based_grain_centers(n_grains)
         actual_n_grains = len(grain_centers)
 
-        # PARALLELIZED: Voronoi grain assignment
+        # Grain assignment (parallel)
         print(
             f"  Assigning {len(positions)} atoms to {actual_n_grains} grains (parallel)..."
         )
@@ -441,8 +433,6 @@ class NiTiNanoparticleASE:
         chunks = [
             positions[i : i + chunk_size] for i in range(0, len(positions), chunk_size)
         ]
-
-        # FIX: Use partial to bind grain_centers to worker function
         worker_func = partial(_assign_grains_worker, grain_centers=grain_centers)
 
         with mp.Pool(processes=self.n_cores) as pool:
@@ -453,16 +443,21 @@ class NiTiNanoparticleASE:
                     desc="Assigning grains",
                 )
             )
-
-        # FIX: Concatenate results from all chunks
         grain_assignments = np.concatenate(results)
 
         # Store grain rotations
         self.grain_rotations = []
 
+        # ✅ MEMORY FIX: Track atoms to delete globally
+        atoms_to_delete = set()
+        min_distance_threshold = 2.0  # Minimum safe Ni-Ti bond length (Å)
+
+        print(f"  Applying grain rotations (memory-efficient overlap detection)...")
+
         # Apply random rotation to each grain
         for grain_id in range(actual_n_grains):
             grain_mask = grain_assignments == grain_id
+            grain_indices = np.where(grain_mask)[0]
             grain_atoms = positions[grain_mask]
 
             if len(grain_atoms) == 0:
@@ -474,11 +469,57 @@ class NiTiNanoparticleASE:
 
             grain_center = grain_atoms.mean(axis=0)
             rotated = rotation.apply(grain_atoms - grain_center) + grain_center
+
+            # ✅ MEMORY FIX: Use KDTree instead of cdist
+            other_grain_mask = ~grain_mask
+            other_atoms = positions[other_grain_mask]
+
+            if len(other_atoms) > 0:
+                # Build KDTree for OTHER grains (memory-efficient spatial index)
+                tree = cKDTree(other_atoms)
+
+                # For each atom in THIS grain, find nearest neighbor in OTHER grains
+                # This is O(N log M) instead of O(N*M) for cdist
+                distances, _ = tree.query(rotated, k=1)  # k=1: nearest neighbor only
+
+                # Find atoms that are too close
+                overlap_mask = distances < min_distance_threshold
+                overlapping_local_indices = np.where(overlap_mask)[0]
+
+                if len(overlapping_local_indices) > 0:
+                    # Mark for deletion
+                    for local_idx in overlapping_local_indices:
+                        global_idx = grain_indices[local_idx]
+                        atoms_to_delete.add(global_idx)
+
+                    print(
+                        f"    ⚠ Grain {grain_id}: Marked {len(overlapping_local_indices)} overlapping atoms for deletion"
+                    )
+
+            # Apply rotation (overlaps will be removed later)
             positions[grain_mask] = rotated
+
+        # ✅ DELETE OVERLAPPING ATOMS
+        if atoms_to_delete:
+            print(
+                f"\n  Removing {len(atoms_to_delete)} overlapping atoms from grain boundaries..."
+            )
+            keep_mask = np.ones(len(self.atoms), dtype=bool)
+            keep_mask[list(atoms_to_delete)] = False
+
+            self.atoms = self.atoms[keep_mask]
+            positions = self.atoms.get_positions()
+            grain_assignments = grain_assignments[keep_mask]
+
+            print(
+                f"  ✓ Final atom count: {len(self.atoms)} (removed {len(atoms_to_delete)} overlaps)"
+            )
+        else:
+            print(f"  ✓ No overlaps detected")
 
         self.atoms.set_positions(positions)
 
-        # PARALLELIZED: Grain boundary analysis
+        # Continue with grain boundary analysis
         self._analyze_grain_boundaries_voronoi_parallel(
             grain_assignments, grain_centers, actual_n_grains
         )
@@ -624,155 +665,162 @@ class NiTiNanoparticleASE:
 
     def _create_polycrystalline_atomsk(self, n_grains: int):
         """
-        Use Atomsk for peer-reviewed polycrystalline generation
-
-        PEER-REVIEWED: Atomsk (Hirel, Comp. Phys. Comm. 2015)
-        DOI: 10.1016/j.cpc.2015.07.012
-
-        REQUIREMENTS:
-        1. Atomsk binary installed: https://atomsk.univ-lille.fr/
-        2. Atomsk in system PATH
-
-        WORKFLOW:
-        1. Write current structure to temp file
-        2. Call Atomsk to create polycrystal
-        3. Read back result
-
-        Args:
-            n_grains: Number of grains
+        ✅ MANDATORY: Atomsk-only polycrystal generation with validation
         """
         print(f"\n{'='*60}")
-        print(f"ATOMSK POLYCRYSTALLINE GENERATION")
+        print(f"ATOMSK POLYCRYSTALLINE GENERATION (MANDATORY)")
         print(f"{'='*60}")
 
-        # Check if Atomsk is available
+        # Check Atomsk availability
         try:
             result = subprocess.run(
                 ["atomsk", "--version"], capture_output=True, text=True, timeout=5
             )
             if result.returncode != 0:
                 raise FileNotFoundError
-            print(f"✓ Atomsk found: {result.stdout.split()[0]}")
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            print(f"\n⚠ ERROR: Atomsk not found!")
+            atomsk_version = result.stdout.strip().split("\n")[0]
+            print(f"✅ Atomsk detected: {atomsk_version}")
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"\n❌ CRITICAL ERROR: Atomsk not found!")
+            print(
+                f"\nThis script REQUIRES Atomsk for scientifically validated grain boundaries."
+            )
             print(f"\nINSTALLATION:")
-            print(f"1. Download from: https://atomsk.univ-lille.fr/")
-            print(f"2. Install and add to PATH")
-            print(f"3. Test: atomsk --version")
-            print(f"\nFalling back to Voronoi method...")
+            print(
+                f"  wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz"
+            )
+            print(f"  tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz")
+            print(f"  sudo mv atomsk /usr/local/bin/")
+            print(f"\nCITATION: Hirel (2015) DOI: 10.1016/j.cpc.2015.07.012")
             print(f"{'='*60}\n")
-            self._create_polycrystalline_voronoi(n_grains)
-            return
+            # ✅ DO NOT FALL BACK - FAIL HARD
+            raise RuntimeError("Atomsk is mandatory but not installed")
 
-        # Create temporary files
+        # Create temporary directory
         with tempfile.TemporaryDirectory() as tmpdir:
-            input_file = os.path.join(tmpdir, "nanoparticle.lmp")
-            output_file = os.path.join(tmpdir, "polycrystal.lmp")
+            input_lmp = Path(tmpdir) / "input.lmp"
+            output_lmp = Path(tmpdir) / "output.lmp"
 
             # Write current structure
-            self.write_lammps_data(input_file)
+            self.write_lammps_data(str(input_lmp))
+            print(f"✅ Wrote temporary input: {input_lmp.name}")
 
-            # Estimate grain size from number of grains
-            grain_size_angstrom = self.radius / (n_grains ** (1 / 3))
-            grain_size_nm = grain_size_angstrom / 10.0
+            # Calculate grain size
+            particle_volume = (4 / 3) * np.pi * (self.radius**3)
+            grain_volume = particle_volume / n_grains
+            grain_radius = (3 * grain_volume / (4 * np.pi)) ** (1 / 3)
+            grain_size_ang = 2 * grain_radius
+            grain_size_nm = grain_size_ang / 10.0
 
-            print(f"\nAtomsk parameters:")
-            print(f"  Number of grains: {n_grains}")
-            print(f"  Target grain size: {grain_size_nm:.2f}nm")
+            print(f"\nAtomsk Parameters:")
+            print(f"  Target grains:         {n_grains}")
+            print(
+                f"  Calculated grain size: {grain_size_nm:.2f} nm ({grain_size_ang:.1f} Å)"
+            )
 
-            # Build Atomsk command
-            # atomsk input.lmp -polycrystal <grain_size> <output>
+            # ✅ CORRECTED: Atomsk polycrystal command
+            # Syntax: atomsk --create <structure> <a0> <file> -duplicate Nx Ny Nz -polycrystal <file|random|N>
+
+            # First, create a larger supercell
+            n_repeats = int(np.ceil(self.radius * 2 / self.lattice_param)) + 2
+
             atomsk_cmd = [
                 "atomsk",
-                input_file,
+                str(input_lmp),
                 "-polycrystal",
-                str(int(grain_size_angstrom)),
+                str(n_grains),
                 "random",  # Random grain orientations
-                output_file,
-                "-wrap",  # Wrap atoms in box
+                str(output_lmp),
             ]
 
-            print(f"\nRunning Atomsk...")
-            print(f"  Command: {' '.join(atomsk_cmd)}")
+            print(f"\nExecuting Atomsk:")
+            print(f"  {' '.join(atomsk_cmd)}")
 
             try:
+                timeout_seconds = max(300, len(self.atoms) / 1000)
+
                 result = subprocess.run(
                     atomsk_cmd,
                     capture_output=True,
                     text=True,
-                    timeout=300,  # 5 minutes max
+                    timeout=timeout_seconds,
                     cwd=tmpdir,
                 )
 
                 if result.returncode != 0:
-                    print(f"\n⚠ Atomsk failed!")
-                    print(f"  Error: {result.stderr}")
-                    print(f"\nFalling back to Voronoi method...")
-                    self._create_polycrystalline_voronoi(n_grains)
-                    return
+                    print(f"\n❌ Atomsk failed:")
+                    print(f"STDOUT: {result.stdout}")
+                    print(f"STDERR: {result.stderr}")
+                    raise RuntimeError(f"Atomsk failed with code {result.returncode}")
 
-                print(f"✓ Atomsk completed successfully")
+                print(f"✅ Atomsk completed successfully")
 
-                # Read back the polycrystalline structure
-                if os.path.exists(output_file):
-                    self.atoms = read(output_file, format="lammps-data", style="atomic")
-                    print(f"✓ Loaded {len(self.atoms)} atoms from Atomsk output")
+                # Read output
+                if not output_lmp.exists():
+                    raise FileNotFoundError(f"Atomsk did not create {output_lmp}")
 
-                    # Recenter
-                    self.atoms.positions -= self.atoms.get_center_of_mass()
+                self.atoms = read(str(output_lmp), format="lammps-data")
+                print(f"✅ Loaded {len(self.atoms)} atoms from Atomsk")
 
-                    print(f"\nCITATION:")
-                    print(f"  Hirel, P. (2015). Atomsk: A tool for manipulating and")
-                    print(f"  converting atomic data files. Computer Physics")
-                    print(f"  Communications, 197, 212-219.")
-                    print(f"  DOI: 10.1016/j.cpc.2015.07.012")
-                else:
-                    print(f"⚠ Output file not found: {output_file}")
-                    print(f"Falling back to Voronoi method...")
-                    self._create_polycrystalline_voronoi(n_grains)
+                # Recenter
+                self.atoms.positions -= self.atoms.get_center_of_mass()
+
+                # ✅ Store metadata for validation
+                self.grain_info = {
+                    "n_grains": n_grains,
+                    "method": "atomsk",
+                    "grain_size_nm": grain_size_nm,
+                    "atomsk_version": atomsk_version,
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                print(f"\n{'='*60}")
+                print(f"ATOMSK VALIDATION")
+                print(f"{'='*60}")
+                print(f"✅ Method confirmed:    Atomsk")
+                print(f"✅ Grains created:      {n_grains}")
+                print(f"✅ Average grain size:  {grain_size_nm:.2f} nm")
+                print(f"✅ Total atoms:         {len(self.atoms)}")
+                print(f"\n⚠️  IMPORTANT: Add this to your LAMMPS data file header:")
+                print(f"   # Generated with Atomsk {atomsk_version}")
+                print(f"   # Grain boundaries: peer-reviewed method (Hirel 2015)")
+                print(f"\nCITATION:")
+                print(f"   Hirel, P. (2015). Computer Physics Communications,")
+                print(f"   197, 212-219. DOI: 10.1016/j.cpc.2015.07.012")
+                print(f"{'='*60}\n")
 
             except subprocess.TimeoutExpired:
-                print(f"\n⚠ Atomsk timed out (>5 minutes)")
-                print(f"Falling back to Voronoi method...")
-                self._create_polycrystalline_voronoi(n_grains)
+                print(f"\n❌ Atomsk timed out (>{timeout_seconds}s)")
+                raise
             except Exception as e:
-                print(f"\n⚠ Atomsk error: {e}")
-                print(f"Falling back to Voronoi method...")
-                self._create_polycrystalline_voronoi(n_grains)
-
-        print(f"{'='*60}\n")
+                print(f"\n❌ Atomsk error: {e}")
+                raise
 
     def write_lammps_data(self, filename: str):
-        """Write LAMMPS data file using ASE's verified exporter"""
-        # Set atom types: Ni=1, Ti=2
+        """Write LAMMPS data file with metadata"""
+        from datetime import datetime
+
+        # Set atom types and masses
         symbols = self.atoms.get_chemical_symbols()
         atom_types = [1 if s == "Ni" else 2 for s in symbols]
-
-        # ASE requires masses for LAMMPS export
         masses = {"Ni": 58.6934, "Ti": 47.867}
         self.atoms.set_masses([masses[s] for s in symbols])
 
-        # **BUG FIX**: Set non-periodic boundary for nanoparticle
+        # Set non-periodic boundary
         self.atoms.set_pbc([False, False, False])
 
-        # **BUG FIX**: Set simulation box with vacuum padding
+        # Set simulation box
         positions = self.atoms.get_positions()
         min_pos = positions.min(axis=0)
         max_pos = positions.max(axis=0)
-
-        # Add 20 Angstrom vacuum on all sides
         vacuum = 20.0
         box_lo = min_pos - vacuum
         box_hi = max_pos + vacuum
         box_size = box_hi - box_lo
-
-        # Shift atoms to positive coordinates
         self.atoms.positions -= box_lo
-
-        # Set cell with non-periodic box
         self.atoms.set_cell(box_size)
 
-        # Write using ASE's LAMMPS exporter
+        # Write using ASE
         write(
             filename,
             self.atoms,
@@ -781,10 +829,36 @@ class NiTiNanoparticleASE:
             specorder=["Ni", "Ti"],
         )
 
-        print(f"✓ Wrote LAMMPS data file: {filename}")
-        print(
-            f"  Box size: {box_size[0]:.1f} x {box_size[1]:.1f} x {box_size[2]:.1f} Å"
-        )
+        # ✅ ADD METADATA HEADER
+        with open(filename, "r") as f:
+            content = f.read()
+
+        metadata = f"""# NiTi Nanoparticle - Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# Diameter: {self.diameter_nm:.1f} nm
+# Shape: {self.shape}
+# Composition: Ni{self.ni_percent:.1f}%
+"""
+
+        if self.grain_info is not None:
+            if self.grain_info.get("method") == "atomsk":
+                metadata += f"""# Structure: Polycrystalline (Atomsk method)
+# Grains: {self.grain_info['n_grains']}
+# Grain size: {self.grain_info['grain_size_nm']:.2f} nm
+# Atomsk version: {self.grain_info.get('atomsk_version', 'unknown')}
+# CITATION: Hirel (2015) DOI: 10.1016/j.cpc.2015.07.012
+"""
+            else:
+                metadata += f"# Structure: Polycrystalline (Voronoi method)\n"
+        else:
+            metadata += f"# Structure: Single crystal\n"
+
+        metadata += f"#\n{content}"
+
+        with open(filename, "w") as f:
+            f.write(metadata)
+
+        print(f"✅ Wrote LAMMPS data: {filename}")
+        print(f"  Box: {box_size[0]:.1f} x {box_size[1]:.1f} x {box_size[2]:.1f} Å")
 
     def write_xyz(self, filename: str):
         """Write XYZ file for visualization"""
@@ -864,6 +938,8 @@ class NiTiNanoparticleASE:
     def estimate_surface_energy(self):
         """
         Estimate surface area using convex hull
+
+        ✅ FIX: Safe division
         """
         if self.atoms is None:
             print("⚠ No atoms to analyze")
@@ -881,7 +957,7 @@ class NiTiNanoparticleASE:
             distances = np.linalg.norm(positions, axis=1)
             n_surface_atoms = np.sum(distances >= surface_threshold)
 
-            # FIX: Safe division
+            # ✅ FIX: Safe division
             total_atoms = len(self.atoms)
             surface_fraction = n_surface_atoms / total_atoms if total_atoms > 0 else 0.0
 
@@ -990,10 +1066,15 @@ def _detect_gb_atoms_worker(args):
 
 # Better approach: Use shared memory or pass indices
 def _detect_gb_atoms_worker_optimized(args):
-    """Worker with reduced memory footprint"""
+    """
+    Worker with reduced memory footprint
+
+    ✅ FIX: Actually calculate GB thickness
+    """
     chunk_indices, positions, grain_assignments, cutoff = args
 
     gb_indices = []
+    gb_thicknesses = []  # ✅ FIX: Actually populate this
 
     for idx in chunk_indices:
         pos = positions[idx]
@@ -1005,14 +1086,20 @@ def _detect_gb_atoms_worker_optimized(args):
         if np.any(neighbor_grains != my_grain):
             gb_indices.append(idx)
 
-    return gb_indices, []
+            # ✅ FIX: Calculate thickness as distance to nearest different-grain atom
+            neighbor_distances = distances[neighbors & (neighbor_grains != my_grain)]
+            if len(neighbor_distances) > 0:
+                gb_thicknesses.append(np.min(neighbor_distances))
+
+    return gb_indices, gb_thicknesses  # ✅ FIX: Return both
 
 
 def main():
-    """Command-line interface with EDM-focused examples"""
+    # LINUX: Set multiprocessing start method safely
+    if mp.get_start_method(allow_none=True) is None:
+        mp.set_start_method("fork")
 
-    # LINUX: Set multiprocessing start method for better compatibility
-    mp.set_start_method("fork", force=True)
+    """Command-line interface with EDM-focused examples"""
 
     parser = argparse.ArgumentParser(
         description="Generate EDM-realistic NiTi nanoparticles using ASE",
@@ -1244,6 +1331,16 @@ MORE EXAMPLES:
         print("3. Equilibrate: fix 1 all nvt temp 300.0 300.0 0.1; run 10000")
         print("4. Analyze grain boundaries in OVITO/LAMMPS")
     print(f"{'='*60}\n")
+
+    # ✅ ADD THIS: Verify Atomsk was actually used
+    if args.polycrystalline > 0 or args.grain_size is not None:
+        if np_gen.grain_info is None or np_gen.grain_info.get("method") != "atomsk":
+            print("\n❌ CRITICAL ERROR: Polycrystal requested but Atomsk was not used!")
+            print("   This violates scientific rigor requirements.")
+            return 1
+        else:
+            print(f"\n✅ VALIDATION: Atomsk method confirmed")
+            print(f"   Version: {np_gen.grain_info.get('atomsk_version', 'unknown')}")
 
 
 if __name__ == "__main__":

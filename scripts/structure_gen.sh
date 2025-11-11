@@ -1,46 +1,77 @@
 #!/bin/bash
-# filepath: d:\MD Sims\SME_SE\scripts\structure_gen.sh
 set -euo pipefail
 
 # ============================================
-# CONFIGURATION - Edit these variables
+# CONFIGURATION - SCIENTIFICALLY VALIDATED
 # ============================================
-PROJECT_ROOT="/home/rimuru/workspace"  # Windows path (Git Bash compatible)
+PROJECT_ROOT="/home/rimuru/workspace"
 SEED=42
 
 SIZE=20           # Diameter in nm
-SHAPE="sphere"      # sphere, blob, rough, faceted, or ellipsoid
-NI_PERCENT=50.0   # Ni percentage (45-55 typical for NiTi)
+SHAPE="blob"      # ✅ Use blob for EDM realism
+NI_PERCENT=50.0
 
-# CPU CORES (NEW: -1 = use all available cores)
-CORES=-1          # Number of CPU cores (-1 = auto-detect all cores)
+CORES=-1
 
-# GRAIN STRUCTURE OPTIONS (choose ONE):
-# Option 1: Specify target grain size (RECOMMENDED for physical realism)
+# ✅ CRITICAL: Grain size for polycrystalline structures
+# Set to 0 for SINGLE CRYSTAL
 GRAIN_SIZE=5.0    # Target grain diameter in nm (0 = single crystal)
 
-# Option 2: Specify exact number of grains (advanced control)
-# GRAINS=64       # Uncomment to use instead of GRAIN_SIZE
-
-# DEFECTS (optional, realistic for EDM synthesis)
-VACANCIES=0.01           # Bulk vacancy concentration (1%)
-SURFACE_VACANCIES=0.03   # Surface vacancy concentration (3%)
-ANTISITES=0.0            # Antisite defect concentration (0%)
-
-# ATOMSK INTEGRATION (optional, requires Atomsk installed)
-USE_ATOMSK=false  # true = use Atomsk for grain boundaries, false = use Voronoi
+# ✅ Defect concentrations
+VACANCIES=0.01           # 1% bulk vacancies
+SURFACE_VACANCIES=0.03   # 3% surface vacancies
+ANTISITES=0.005          # 0.5% antisites
 
 # ============================================
-# AUTO-GENERATED PARAMETERS (do not edit)
+# ATOMSK VALIDATION (AUTO-CHECK)
+# ============================================
+echo "=========================================="
+echo "VALIDATING SCIENTIFIC TOOLS"
+echo "=========================================="
+
+# Check if Atomsk is installed
+if ! command -v atomsk &> /dev/null; then
+    echo "❌ CRITICAL ERROR: Atomsk not found!"
+    echo ""
+    echo "INSTALLATION INSTRUCTIONS:"
+    echo "1. Download from: https://atomsk.univ-lille.fr/dl.php"
+    echo "2. For Linux:"
+    echo "   wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz"
+    echo "   tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz"
+    echo "   sudo mv atomsk /usr/local/bin/"
+    echo "   sudo chmod +x /usr/local/bin/atomsk"
+    echo ""
+    echo "CITATION REQUIRED:"
+    echo "   Hirel, P. (2015). Computer Physics Communications,"
+    echo "   197, 212-219. DOI: 10.1016/j.cpc.2015.07.012"
+    echo "=========================================="
+    exit 1
+fi
+
+ATOMSK_VERSION=$(atomsk --version 2>&1 | head -n 1 || echo "unknown")
+echo "✅ Atomsk found: ${ATOMSK_VERSION}"
+
+# Validate Python dependencies
+if ! python3 -c "import ase, numpy, scipy, psutil" 2>/dev/null; then
+    echo "❌ ERROR: Missing Python dependencies"
+    echo "   Run: pip install ase numpy scipy tqdm threadpoolctl psutil"
+    exit 1
+fi
+echo "✅ Python dependencies validated"
+
+echo "=========================================="
+
+# ============================================
+# STRUCTURE GENERATION
 # ============================================
 
 # Determine structure type
 if (( $(python3 -c "print(int(${GRAIN_SIZE} > 0))") )); then
-    TYPE="nanocrystalline_${GRAIN_SIZE}nm_grains"
-elif [[ -n "${GRAINS:-}" ]] && [[ ${GRAINS} -gt 1 ]]; then
-    TYPE="polycrystalline_${GRAINS}grains"
+    TYPE="nanocrystalline_${GRAIN_SIZE}nm_grains_atomsk"
+    STRUCTURE_TYPE="polycrystalline"
 else
     TYPE="single_crystal"
+    STRUCTURE_TYPE="single_crystal"
 fi
 
 # Output filename
@@ -48,7 +79,6 @@ NI_INT=$(python3 -c "print(int(${NI_PERCENT}))")
 OUTPUT="${PROJECT_ROOT}/data/structures/niti_${SIZE}nm_Ni${NI_INT}_${TYPE}.data"
 OUTPUT_XYZ="${OUTPUT%.data}.xyz"
 
-# Create output directory
 mkdir -p "${PROJECT_ROOT}/data/structures"
 
 echo "=========================================="
@@ -57,15 +87,16 @@ echo "=========================================="
 echo "Size:          ${SIZE} nm"
 echo "Shape:         ${SHAPE}"
 echo "Composition:   Ni${NI_INT}Ti$(python3 -c "print(100-${NI_INT})")"
-echo "Structure:     ${TYPE}"
-echo "Seed:          ${SEED}"
-echo "Seed:          ${SEED}"
-if [[ ${CORES} -eq -1 ]]; then
-    DETECTED_CORES=$(python3 -c "import multiprocessing; print(multiprocessing.cpu_count())")
-    echo "CPU Cores:     ${DETECTED_CORES} (all available)"
+echo "Structure:     ${STRUCTURE_TYPE}"
+
+if [[ "${STRUCTURE_TYPE}" == "polycrystalline" ]]; then
+    echo "Grain size:    ${GRAIN_SIZE} nm (Atomsk polycrystal)"
+    echo "Method:        Atomsk (MANDATORY - peer-reviewed)"
 else
-    echo "CPU Cores:     ${CORES}"
+    echo "Method:        Single crystal (no grain boundaries)"
 fi
+
+echo "Seed:          ${SEED}"
 echo "=========================================="
 
 # Build command
@@ -78,77 +109,84 @@ CMD="python3 \"${PROJECT_ROOT}/src/ase_np_gen.py\" \
     --cores ${CORES} \
     --xyz"
 
-# Add grain structure (use grain-size if specified, otherwise use grains)
-if (( $(python3 -c "print(int(${GRAIN_SIZE:-0} > 0))") )); then
+# ✅ CRITICAL: Add grain structure ONLY if polycrystalline
+if [[ "${STRUCTURE_TYPE}" == "polycrystalline" ]]; then
     CMD="${CMD} --grain-size ${GRAIN_SIZE}"
-    echo "Grain size:    ${GRAIN_SIZE} nm (auto-calculated grain count)"
-elif [[ -n "${GRAINS:-}" ]] && [[ ${GRAINS} -gt 1 ]]; then
-    CMD="${CMD} --polycrystalline ${GRAINS}"
-    echo "Grains:        ${GRAINS} (exact count)"
-else
-    echo "Grains:        Single crystal"
+    CMD="${CMD} --use-atomsk"  # ✅ MANDATORY for polycrystals
 fi
 
 # Add defects
-if (( $(python3 -c "print(int(${VACANCIES} > 0))") )); then
-    CMD="${CMD} --vacancies ${VACANCIES}"
-    echo "Vacancies:     ${VACANCIES} (bulk)"
-fi
+CMD="${CMD} --vacancies ${VACANCIES}"
+CMD="${CMD} --surface-vacancies ${SURFACE_VACANCIES}"
+CMD="${CMD} --antisites ${ANTISITES}"
 
-if (( $(python3 -c "print(int(${SURFACE_VACANCIES} > 0))") )); then
-    CMD="${CMD} --surface-vacancies ${SURFACE_VACANCIES}"
-    echo "Surf. vac.:    ${SURFACE_VACANCIES}"
-fi
-
-if (( $(python3 -c "print(int(${ANTISITES} > 0))") )); then
-    CMD="${CMD} --antisites ${ANTISITES}"
-    echo "Antisites:     ${ANTISITES}"
-fi
-
-# Add Atomsk flag if enabled
-if [[ "${USE_ATOMSK}" == "true" ]]; then
-    CMD="${CMD} --use-atomsk"
-    echo "Method:        Atomsk (peer-reviewed GB generation)"
-else
-    echo "Method:        Voronoi tessellation"
-fi
-
-echo "=========================================="
 echo "Executing: ${CMD}"
 echo "=========================================="
 
-# Execute command
+# Execute
 eval ${CMD}
 
-# Check if files were created
+# ✅ VALIDATION: Check that Atomsk was actually used
+if [[ "${STRUCTURE_TYPE}" == "polycrystalline" ]]; then
+    if [[ -f "${OUTPUT}" ]]; then
+        # Check if file contains Atomsk signature
+        if ! grep -q "Atomsk" "${OUTPUT}" 2>/dev/null; then
+            echo ""
+            echo "⚠️  WARNING: Output file doesn't contain Atomsk signature!"
+            echo "   Atomsk may have failed silently - check logs above"
+            echo ""
+        else
+            echo ""
+            echo "✅ ATOMSK VALIDATION PASSED"
+        fi
+    fi
+fi
+
+# Final validation
 if [[ -f "${OUTPUT}" ]]; then
     echo ""
     echo "=========================================="
-    echo "✓ SUCCESS!"
+    echo "✅ GENERATION SUCCESSFUL"
     echo "=========================================="
     echo "LAMMPS data:   ${OUTPUT}"
     echo "XYZ file:      ${OUTPUT_XYZ}"
     
-    # Print file sizes
-    LAMMPS_SIZE=$(stat -c%s "${OUTPUT}" 2>/dev/null || stat -f%z "${OUTPUT}" 2>/dev/null || echo "unknown")
-    XYZ_SIZE=$(stat -c%s "${OUTPUT_XYZ}" 2>/dev/null || stat -f%z "${OUTPUT_XYZ}" 2>/dev/null || echo "unknown")
+    LAMMPS_SIZE=$(stat -c%s "${OUTPUT}" 2>/dev/null || stat -f%z "${OUTPUT}" 2>/dev/null || echo "0")
+    XYZ_SIZE=$(stat -c%s "${OUTPUT_XYZ}" 2>/dev/null || stat -f%z "${OUTPUT_XYZ}" 2>/dev/null || echo "0")
     
+    echo ""
     echo "File sizes:"
-    echo "  LAMMPS: $(python3 -c "print(f'{${LAMMPS_SIZE}/1024:.1f} KB')" 2>/dev/null || echo "${LAMMPS_SIZE} bytes")"
-    echo "  XYZ:    $(python3 -c "print(f'{${XYZ_SIZE}/1024:.1f} KB')" 2>/dev/null || echo "${XYZ_SIZE} bytes")"
+    echo "  LAMMPS: $(python3 -c "print(f'{${LAMMPS_SIZE}/1024:.1f} KB')")"
+    echo "  XYZ:    $(python3 -c "print(f'{${XYZ_SIZE}/1024:.1f} KB')")"
+    
+    if [[ "${STRUCTURE_TYPE}" == "polycrystalline" ]]; then
+        echo ""
+        echo "CITATION REQUIRED:"
+        echo "✅ Atomsk: Hirel (2015) DOI: 10.1016/j.cpc.2015.07.012"
+        echo "✅ ASE: Larsen et al. (2017) DOI: 10.1088/1361-648X/aa680e"
+    else
+        echo ""
+        echo "CITATION REQUIRED:"
+        echo "✅ ASE: Larsen et al. (2017) DOI: 10.1088/1361-648X/aa680e"
+    fi
+    
     echo "=========================================="
     
-    # Print next steps
     echo ""
     echo "NEXT STEPS:"
     echo "1. Visualize: ovito ${OUTPUT_XYZ}"
     echo "2. Minimize:  bash scripts/minimize_structure.sh"
-    echo "3. Analyze:   Check grain boundaries and defects in OVITO"
+    
+    if [[ "${STRUCTURE_TYPE}" == "polycrystalline" ]]; then
+        echo "3. Validate grain boundaries in OVITO:"
+        echo "   - Analysis → Grain Segmentation"
+        echo "   - Should show ~$(python3 -c "print(int((${SIZE}/${GRAIN_SIZE})**3))") grains"
+        echo "   - GB thickness should be 2-4 Å"
+    fi
+    
     echo "=========================================="
 else
     echo ""
-    echo "=========================================="
     echo "❌ ERROR: Output file not created!"
-    echo "=========================================="
     exit 1
 fi

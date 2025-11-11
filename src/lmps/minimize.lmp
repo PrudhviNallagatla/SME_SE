@@ -15,59 +15,163 @@ read_data ${structure_file}
 pair_style meam
 pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
 
+# ✅ FIX: Optimized neighbor settings for nanoparticles
 neighbor 2.0 bin
-neigh_modify delay 5 every 1
+neigh_modify delay 0 every 1 check yes  # Always check for rebuilds
+
+processors * * * grid numa
+balance 1.0 shift xyz 20 1.1
 
 # Compute per-atom properties
 compute pe all pe/atom
 compute ke all ke/atom
 compute stress all stress/atom NULL
 
-# **IMPROVEMENT**: Add centro-symmetry for defect detection
-compute csym all centro/atom fcc  # For B2 structure analysis
+# ✅ FIX: Use BCC centro-symmetry for B2 NiTi (not FCC!)
+compute csym all centro/atom bcc
+
+# ✅ NEW: Add coordination number to detect overlaps
+compute coord all coord/atom cutoff 3.5
 
 thermo 100
-thermo_style custom step temp pe ke etotal press vol lx ly lz
+thermo_style custom step temp pe ke etotal press vol lx ly lz fmax fnorm
 
 shell mkdir -p ${output_dir}
 
 # Dump initial structure
-dump 1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym
+dump 1 all custom 1 ${output_dir}/initial.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym c_coord
 dump_modify 1 sort id
 run 0
 undump 1
 
-# **CRITICAL FIX**: Use FIRE minimizer for nanoparticles (better than CG)
+# ✅ NEW: Validate initial structure before minimization
+variable pe_per_atom equal pe/atoms
+variable avg_coord equal ave(c_coord)
+variable max_coord equal max(c_coord)
+variable natoms equal atoms
+
+print "=========================================="
+print "INITIAL STRUCTURE VALIDATION"
+print "=========================================="
+print "Number of atoms:     ${natoms}"
+print "Initial PE/atom:     ${pe_per_atom} eV"
+print "Avg coordination:    ${avg_coord}"
+print "Max coordination:    ${max_coord}"
+print "=========================================="
+
+# ✅ FIX: Check for catastrophic overlaps
+if "${pe_per_atom} > 0.0" then &
+    "print 'ERROR: Structure has positive energy (severe overlaps!)'" &
+    "print 'PE/atom = ${pe_per_atom} eV (should be negative)'" &
+    "print 'Check your ASE generation script!'" &
+    "quit 1"
+
+if "${max_coord} > 30" then &
+    "print 'WARNING: Abnormally high coordination (${max_coord})'" &
+    "print 'Structure may have overlaps or liquid-like disorder'"
+
+# ✅ FIX: STAGED MINIMIZATION (gentle → aggressive)
+print "=========================================="
+print "STAGE 1: Steepest Descent (handle large forces)"
+print "=========================================="
+min_style sd
+min_modify dmax 0.1  # Small maximum displacement
+minimize 1.0e-4 1.0e-6 5000 10000
+
+variable fmax_sd equal fmax
+print "Stage 1 complete: fmax = ${fmax_sd} eV/Å"
+
+print "=========================================="
+print "STAGE 2: Conjugate Gradient (medium convergence)"
+print "=========================================="
+min_style cg
+minimize 1.0e-6 1.0e-8 10000 20000
+
+variable fmax_cg equal fmax
+print "Stage 2 complete: fmax = ${fmax_cg} eV/Å"
+
+print "=========================================="
+print "STAGE 3: FIRE (final polish)"
+print "=========================================="
 min_style fire
-minimize 1.0e-8 1.0e-10 10000 50000
+minimize 1.0e-8 1.0e-10 20000 50000
+
+variable fmax_fire equal fmax
+print "Stage 3 complete: fmax = ${fmax_fire} eV/Å"
+
+# ✅ FIX: Validate minimization convergence
+variable final_fmax equal fmax
+variable final_pe equal pe
+variable final_pe_per_atom equal v_final_pe/v_natoms
+variable final_press equal press
+variable final_lx equal lx
+variable final_ly equal ly
+variable final_lz equal lz
+variable final_vol equal vol
+variable final_density equal density
+
+# ✅ NEW: Check if minimization actually converged
+if "${final_fmax} > 0.1" then &
+    "print 'WARNING: Minimization did not fully converge!'" &
+    "print 'Final fmax = ${final_fmax} eV/Å (should be < 0.01)'" &
+    "print 'Structure may still have defects or overlaps'" &
+    "write_dump all custom ${output_dir}/unconverged.dump id type x y z fx fy fz c_pe c_coord"
+
+# ✅ NEW: Validate final energy
+if "${final_pe_per_atom} > -3.0" then &
+    "print 'ERROR: Final energy too high (${final_pe_per_atom} eV/atom)'" &
+    "print 'Expected for B2 NiTi: -4.6 eV/atom'" &
+    "print 'Structure is likely still distorted!'" &
+    "quit 1"
+
+# ✅ NEW: Validate final density
+if "${final_density} < 3.0" then &
+    "print 'ERROR: Density too low (${final_density} g/cm³)'" &
+    "print 'Expected for NiTi: ~6.5 g/cm³'" &
+    "print 'Structure has expanded like a gas!'" &
+    "quit 1"
 
 # Save minimized structure
 write_data ${output_dir}/minimized.data
 write_restart ${output_dir}/minimized.restart
 
 # Dump final structure
-dump 2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym
+dump 2 all custom 1 ${output_dir}/minimized.dump id type x y z c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_csym c_coord
 dump_modify 2 sort id
 run 0
 undump 2
 
 # Print final state
-variable final_pe equal pe
-variable final_press equal press
-variable final_lx equal lx
-variable final_ly equal ly
-variable final_lz equal lz
-variable natoms equal atoms
-
-# **IMPROVEMENT**: Calculate average per-atom energy
-variable final_pe_per_atom equal v_final_pe/v_natoms
-
 print "=========================================="
 print "MINIMIZATION COMPLETE"
 print "=========================================="
 print "Final PE:           ${final_pe} eV"
 print "Final PE/atom:      ${final_pe_per_atom} eV"
 print "Final Pressure:     ${final_press} bar"
+print "Final Density:      ${final_density} g/cm³"
+print "Final fmax:         ${final_fmax} eV/Å"
 print "Box size:           ${final_lx} x ${final_ly} x ${final_lz} Å"
+print "Volume:             ${final_vol} Å³"
 print "Number of atoms:    ${natoms}"
+print "=========================================="
+
+# ✅ NEW: Final quality check
+variable pe_check equal "(v_final_pe_per_atom > -5.0) && (v_final_pe_per_atom < -4.0)"
+if "${pe_check} == 1" then &
+    "print '✓ Energy within expected range for B2 NiTi'" &
+else &
+    "print '⚠ Energy outside typical B2 range (-4.0 to -5.0 eV/atom)'"
+
+variable density_check equal "(v_final_density > 5.0) && (v_final_density < 8.0)"
+if "${density_check} == 1" then &
+    "print '✓ Density within expected range for NiTi'" &
+else &
+    "print '⚠ Density outside typical NiTi range (5-8 g/cm³)'"
+
+variable fmax_check equal "v_final_fmax < 0.05"
+if "${fmax_check} == 1" then &
+    "print '✓ Forces well converged'" &
+else &
+    "print '⚠ Forces not fully converged (consider longer minimization)'"
+
 print "=========================================="
