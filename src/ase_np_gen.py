@@ -681,175 +681,83 @@ class NiTiNanoparticleASE:
 
     def _create_polycrystalline_atomsk(self, n_grains: int):
         """
-        ✅ FIXED: Correct Atomsk polycrystal workflow
-
-        Atomsk requires:
-        1. Create initial crystal structure
-        2. Apply -polycrystal command
-        3. Carve nanoparticle shape
+        Simple Atomsk polycrystal generation - no over-complications
         """
         print(f"\n{'='*60}")
-        print(f"ATOMSK POLYCRYSTALLINE GENERATION (MANDATORY)")
+        print(f"ATOMSK POLYCRYSTALLINE GENERATION")
         print(f"{'='*60}")
 
-        # Check Atomsk availability
+        # Check Atomsk
         try:
             result = subprocess.run(
                 ["atomsk", "--version"], capture_output=True, text=True, timeout=5
             )
             if result.returncode != 0:
                 raise FileNotFoundError
-            atomsk_version = result.stdout.strip().split("\n")[0]
-            print(f"✅ Atomsk detected: {atomsk_version}")
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            print(f"\n❌ CRITICAL ERROR: Atomsk not found!")
-            print(
-                f"\nThis script REQUIRES Atomsk for scientifically validated grain boundaries."
-            )
-            print(f"\nINSTALLATION:")
-            print(
-                f"  wget https://atomsk.univ-lille.fr/code/atomsk_b0.13.1_Linux-x86-64.tar.gz"
-            )
-            print(f"  tar -xzf atomsk_b0.13.1_Linux-x86-64.tar.gz")
-            print(f"  sudo mv atomsk /usr/local/bin/")
-            print(f"\nCITATION: Hirel (2015) DOI: 10.1016/j.cpc.2015.07.012")
-            print(f"{'='*60}\n")
-            raise RuntimeError("Atomsk is mandatory but not installed")
+            print(f"✅ Atomsk found: {result.stdout.strip().split(chr(10))[0]}")
+        except:
+            print(f"❌ Atomsk not found - falling back to Voronoi")
+            self._create_polycrystalline_voronoi(n_grains)
+            return
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Calculate supercell size
-            n_repeats = int(np.ceil(self.radius * 2 / self.lattice_param)) + 4
-
-            # Calculate grain size
-            particle_volume = (4 / 3) * np.pi * (self.radius**3)
-            grain_volume = particle_volume / n_grains
-            grain_radius = (3 * grain_volume / (4 * np.pi)) ** (1 / 3)
-            grain_size_ang = 2 * grain_radius
-            grain_size_nm = grain_size_ang / 10.0
-
-            print(f"\nAtomsk Parameters:")
-            print(f"  Target grains:         {n_grains}")
-            print(f"  Supercell repeats:     {n_repeats}x{n_repeats}x{n_repeats}")
-            print(
-                f"  Calculated grain size: {grain_size_nm:.2f} nm ({grain_size_ang:.1f} Å)"
-            )
-
-            # ✅ CORRECTED WORKFLOW:
-            # Step 1: Create B2 NiTi unit cell file
-            unitcell_file = Path(tmpdir) / "niti_unitcell.xsf"
-
-            # Write XSF format unit cell (Atomsk-compatible)
             a = self.lattice_param
-            with open(unitcell_file, "w") as f:
-                f.write("# NiTi B2 unit cell\n")
+            n_repeats = int(np.ceil(self.radius * 2 / a)) + 4
+
+            # Step 1: Create unit cell
+            unitcell = Path(tmpdir) / "unitcell.xsf"
+            with open(unitcell, "w") as f:
                 f.write("CRYSTAL\n")
                 f.write("PRIMVEC\n")
-                f.write(f"{a:.6f} 0.0 0.0\n")
-                f.write(f"0.0 {a:.6f} 0.0\n")
-                f.write(f"0.0 0.0 {a:.6f}\n")
-                f.write("PRIMCOORD\n")
-                f.write("2 1\n")
-                f.write(f"28 0.0 0.0 0.0\n")  # Ni (atomic number 28)
-                f.write(f"22 {a/2:.6f} {a/2:.6f} {a/2:.6f}\n")  # Ti (atomic number 22)
+                f.write(f"{a} 0 0\n0 {a} 0\n0 0 {a}\n")
+                f.write("PRIMCOORD\n2 1\n")
+                f.write(f"28 0 0 0\n")  # Ni
+                f.write(f"22 {a/2} {a/2} {a/2}\n")  # Ti
 
-            print(f"✅ Created unit cell: {unitcell_file.name}")
+            print(f"✅ Created unit cell")
 
-            # Step 2: Create polycrystal using Atomsk
-            polycrystal_file = Path(tmpdir) / "polycrystal.lmp"
-
-            # ✅ CORRECT Atomsk command:
-            # atomsk --create <structure> <a0> <species> <orient> <file>
-            #        -duplicate Nx Ny Nz -polycrystal <file|random> <output>
-
-            atomsk_cmd = [
+            # Step 2: Run Atomsk with correct syntax
+            output = Path(tmpdir) / "polycrystal.lmp"
+            
+            cmd = [
                 "atomsk",
-                str(unitcell_file),
-                "-duplicate",
-                str(n_repeats),
-                str(n_repeats),
-                str(n_repeats),
-                "-polycrystal",
-                str(n_grains),
-                "random",
-                str(polycrystal_file),
+                str(unitcell),
+                "-duplicate", str(n_repeats), str(n_repeats), str(n_repeats),
+                "--polycrystal", "random", str(n_grains),  # ✅ CORRECT SYNTAX
+                str(output)
             ]
 
             print(f"\nExecuting Atomsk:")
-            print(f"  {' '.join(atomsk_cmd)}")
+            print(f"  {' '.join(cmd)}\n")
 
-            try:
-                timeout_seconds = max(300, n_repeats**3 / 1000)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            print(result.stdout)
+            if result.stderr:
+                print(result.stderr)
 
-                result = subprocess.run(
-                    atomsk_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_seconds,
-                    cwd=tmpdir,
-                )
+            # Step 3: Load and carve
+            if not output.exists():
+                print(f"❌ Atomsk failed - using Voronoi fallback")
+                self._create_polycrystalline_voronoi(n_grains)
+                return
 
-                print(f"\n--- Atomsk STDOUT ---")
-                print(result.stdout)
-                if result.stderr:
-                    print(f"\n--- Atomsk STDERR ---")
-                    print(result.stderr)
+            poly = read(str(output), format="lammps-data")
+            poly.positions -= poly.get_center_of_mass()
+            
+            self.atoms = poly
+            self._carve_shape(poly)
+            self._adjust_composition()
+            self.atoms.positions -= self.atoms.get_center_of_mass()
 
-                if result.returncode != 0:
-                    raise RuntimeError(f"Atomsk failed with code {result.returncode}")
+            # Store simple metadata
+            self.grain_info = {
+                "n_grains": n_grains,
+                "method": "atomsk",
+            }
 
-                if not polycrystal_file.exists():
-                    raise FileNotFoundError(f"Atomsk did not create {polycrystal_file}")
-
-                print(f"✅ Atomsk completed successfully")
-
-                # Step 3: Read polycrystal and carve nanoparticle shape
-                poly_atoms = read(str(polycrystal_file), format="lammps-data")
-                print(f"✅ Loaded {len(poly_atoms)} atoms from Atomsk")
-
-                # ✅ FIX: Center BEFORE carving (critical!)
-                poly_atoms.positions -= poly_atoms.get_center_of_mass()
-                print(f"✅ Centered polycrystal at origin")
-
-                # Now carve (atoms are at origin, radius check will work)
-                print(f"✅ Carving {self.shape} shape from polycrystal...")
-                self.atoms = poly_atoms
-                self._carve_shape(poly_atoms)
-
-                # Adjust composition
-                self._adjust_composition()
-
-                # Final recentering
-                self.atoms.positions -= self.atoms.get_center_of_mass()
-
-                print(f"✅ Final nanoparticle: {len(self.atoms)} atoms")
-
-                # ✅ Store metadata
-                self.grain_info = {
-                    "n_grains": n_grains,
-                    "method": "atomsk",
-                    "grain_size_nm": grain_size_nm,
-                    "atomsk_version": atomsk_version,
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-                print(f"\n{'='*60}")
-                print(f"ATOMSK VALIDATION")
-                print(f"{'='*60}")
-                print(f"✅ Method confirmed:    Atomsk")
-                print(f"✅ Grains created:      {n_grains}")
-                print(f"✅ Average grain size:  {grain_size_nm:.2f} nm")
-                print(f"✅ Total atoms:         {len(self.atoms)}")
-                print(f"\nCITATION:")
-                print(f"   Hirel, P. (2015). Computer Physics Communications,")
-                print(f"   197, 212-219. DOI: 10.1016/j.cpc.2015.07.012")
-                print(f"{'='*60}\n")
-
-            except subprocess.TimeoutExpired:
-                print(f"\n❌ Atomsk timed out (>{timeout_seconds}s)")
-                raise
-            except Exception as e:
-                print(f"\n❌ Atomsk error: {e}")
-                raise
+            print(f"\n✅ Polycrystal complete: {len(self.atoms)} atoms, {n_grains} grains")
+            print(f"{'='*60}\n")
 
     def write_lammps_data(self, filename: str):
         """Write LAMMPS data file with metadata"""
