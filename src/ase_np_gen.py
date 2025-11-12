@@ -681,7 +681,7 @@ class NiTiNanoparticleASE:
 
     def _create_polycrystalline_atomsk(self, n_grains: int):
         """
-        Simple Atomsk polycrystal generation - no over-complications
+        Simple Atomsk polycrystal generation
         """
         print(f"\n{'='*60}")
         print(f"ATOMSK POLYCRYSTALLINE GENERATION")
@@ -702,61 +702,112 @@ class NiTiNanoparticleASE:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             a = self.lattice_param
+            # ✅ FIX: Smaller system first, then duplicate
             n_repeats = int(np.ceil(self.radius * 2 / a)) + 4
 
-            # Step 1: Create unit cell
-            unitcell = Path(tmpdir) / "unitcell.xsf"
+            # ✅ REDUCE size if too large (Atomsk can hang on huge systems)
+            if n_repeats > 50:
+                print(f"  ⚠ Large system detected ({n_repeats} repeats)")
+                print(f"  Creating smaller intermediate structure...")
+                n_repeats = min(n_repeats, 50)  # Cap at 50x50x50
+
+            # Step 1: Create unit cell (CFG format - better for Atomsk)
+            unitcell = Path(tmpdir) / "unitcell.cfg"
             with open(unitcell, "w") as f:
-                f.write("CRYSTAL\n")
-                f.write("PRIMVEC\n")
-                f.write(f"{a} 0 0\n0 {a} 0\n0 0 {a}\n")
-                f.write("PRIMCOORD\n2 1\n")
-                f.write(f"28 0 0 0\n")  # Ni
-                f.write(f"22 {a/2} {a/2} {a/2}\n")  # Ti
+                f.write(f"Number of particles = 2\n")
+                f.write(f"A = {a} Angstrom\n")
+                f.write(f"H0(1,1) = {a} A\n")
+                f.write(f"H0(1,2) = 0.0 A\n")
+                f.write(f"H0(1,3) = 0.0 A\n")
+                f.write(f"H0(2,1) = 0.0 A\n")
+                f.write(f"H0(2,2) = {a} A\n")
+                f.write(f"H0(2,3) = 0.0 A\n")
+                f.write(f"H0(3,1) = 0.0 A\n")
+                f.write(f"H0(3,2) = 0.0 A\n")
+                f.write(f"H0(3,3) = {a} A\n")
+                f.write(f".NO_VELOCITY.\n")
+                f.write(f"entry_count = 3\n")
+                f.write(f"Ni\n")
+                f.write(f"0.0 0.0 0.0\n")
+                f.write(f"Ti\n")
+                f.write(f"{a/2} {a/2} {a/2}\n")
 
             print(f"✅ Created unit cell")
 
-            # Step 2: Run Atomsk with correct syntax
+            # Step 2: Create polycrystal with Atomsk (CORRECTED COMMAND)
             output = Path(tmpdir) / "polycrystal.lmp"
-            
+
+            # ✅ CORRECT SYNTAX: polycrystal mode first, then duplicate
             cmd = [
                 "atomsk",
+                "--polycrystal",
                 str(unitcell),
-                "-duplicate", str(n_repeats), str(n_repeats), str(n_repeats),
-                "--polycrystal", "random", str(n_grains),  # ✅ CORRECT SYNTAX
-                str(output)
+                str(n_grains),
+                str(output),
+                "-duplicate",
+                str(n_repeats),
+                str(n_repeats),
+                str(n_repeats),
             ]
 
             print(f"\nExecuting Atomsk:")
-            print(f"  {' '.join(cmd)}\n")
+            print(f"  {' '.join(cmd)}")
+            print(f"  (This may take 1-2 minutes for large systems...)\n")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            print(result.stdout)
-            if result.stderr:
-                print(result.stderr)
+            # ✅ FIX: Add timeout and show progress
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout
+                    cwd=tmpdir,
+                )
 
-            # Step 3: Load and carve
-            if not output.exists():
-                print(f"❌ Atomsk failed - using Voronoi fallback")
+                print("--- Atomsk Output ---")
+                print(result.stdout)
+                if result.stderr:
+                    print("--- Atomsk Errors ---")
+                    print(result.stderr)
+                print("--- End Output ---\n")
+
+            except subprocess.TimeoutExpired:
+                print(f"\n❌ Atomsk timeout (>5 min) - system too large!")
+                print(f"   Falling back to Voronoi method")
                 self._create_polycrystalline_voronoi(n_grains)
                 return
 
+            # Step 3: Check output
+            if not output.exists():
+                print(f"❌ Atomsk failed to create output file")
+                print(f"   Falling back to Voronoi method")
+                self._create_polycrystalline_voronoi(n_grains)
+                return
+
+            # Step 4: Load and process
+            print(f"✅ Loading polycrystal...")
             poly = read(str(output), format="lammps-data")
             poly.positions -= poly.get_center_of_mass()
-            
+
+            print(f"✅ Loaded {len(poly)} atoms")
+            print(f"  Carving to {self.shape} shape...")
+
             self.atoms = poly
             self._carve_shape(poly)
             self._adjust_composition()
             self.atoms.positions -= self.atoms.get_center_of_mass()
 
-            # Store simple metadata
+            # Store metadata
             self.grain_info = {
                 "n_grains": n_grains,
                 "method": "atomsk",
+                "grain_size_nm": self.diameter_nm / (n_grains ** (1 / 3)),
+                "atomsk_version": (
+                    result.stdout.strip().split("\n")[0] if result.stdout else "unknown"
+                ),
             }
 
-            print(f"\n✅ Polycrystal complete: {len(self.atoms)} atoms, {n_grains} grains")
+            print(f"\n✅ Polycrystal complete: {len(self.atoms)} atoms")
             print(f"{'='*60}\n")
 
     def write_lammps_data(self, filename: str):
