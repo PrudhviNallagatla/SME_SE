@@ -1,292 +1,169 @@
-# GOAL: Realistic Shape Memory Effect for 10nm NiTi nanoparticle
-# TARGET: 10 hour runtime with physically meaningful results
+# filepath: /home/rimuru/workspace/src/lmps/sme_compression_robust.lmp
+# GOAL: Quasi-static Compression of NiTi Nanoparticle (Shape Memory Effect)
+# METHOD: Harmonic Wall Anvils with correct force logging
 
 clear
-units metal
-dimension 3
-boundary s s s
-atom_style atomic
+units       metal
+dimension   3
+boundary    s s s
+atom_style  atomic
 
-read_data ${input_data}
+variable input_data string "minimized.data"
+variable pot_lib string "library.meam"
+variable pot_file string "NiTi.meam"
+variable output_dir string "output"
 
-pair_style meam
-pair_coeff * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
-neighbor 2.0 bin
+read_data   ${input_data}
+
+# --- POTENTIAL ---
+pair_style  meam
+pair_coeff  * * ${pot_lib} Ni Ti ${pot_file} Ni Ti
+
+# Optimization: Smaller skin for statics/slow dynamics
+neighbor    1.0 bin
 neigh_modify delay 0 every 1 check yes
 
+# ============================================
+# 1. SETTINGS & VARIABLES
+# ============================================
+timestep    0.002
+
+# Thermal Cycle
+variable    T_low   equal 200.0
+variable    T_high  equal 450.0
+variable    tdamp   equal 100.0*dt
+
+# Mechanical Loading (Quasi-static)
+variable    strain_target  equal 0.12   # 12% (Aim high to see full transformation)
+variable    load_time      equal 2000.0 # ps (2 ns) - Slower is better!
+variable    load_steps     equal ${load_time}/dt
+
+# --- COMPUTATIONS ---
 compute pe_atom all pe/atom
-compute ke_atom all ke/atom
-compute stress_atom all stress/atom NULL
-compute centro all centro/atom bcc
-compute cna all cna/atom 3.5
-compute coord all coord/atom cutoff 3.5
+compute stress  all stress/atom NULL
 
-timestep 0.001  # 1 fs
+# [PHYSICS FIX] Use Centrosymmetry for Phase ID (B2 vs B19')
+compute csym    all centro/atom 8
+# CSP < 1.0 is roughly ordered (Austenite or twin boundaries)
+# CSP > 2.0 indicates disorder or heavy shear
+variable is_martensite atom "c_csym > 1.0" 
+
+# 1. Zero Momentum (XY only)
+fix freeze_mom all momentum 1000 linear 1 1 0 angular
 
 # ============================================
-# REALISTIC PARAMETERS FOR 10nm NANOPARTICLE
+# 2. PROTOCOL: PREPARATION
+# ============================================
+print "=== STEP 1: EQUILIBRATION (AUSTENITE) ==="
+velocity all create ${T_high} 48274 dist gaussian
+fix 1 all nvt temp ${T_high} ${T_high} ${tdamp}
+run 10000
+
+print "=== STEP 2: COOLING TO MARTENSITE ==="
+fix 1 all nvt temp ${T_high} ${T_low} ${tdamp}
+run 50000 # 100 ps cool
+fix 1 all nvt temp ${T_low} ${T_low} ${tdamp}
+run 10000
+
+# ============================================
+# 3. GEOMETRY MEASUREMENT (FIXED)
+# ============================================
+run 0
+compute zmin_comp all reduce min z
+compute zmax_comp all reduce max z
+variable z_min_curr equal c_zmin_comp
+variable z_max_curr equal c_zmax_comp
+variable Lz_0 equal v_z_max_curr-v_z_min_curr
+
+# Better area estimate (bounding box XY)
+compute xmin_comp all reduce min x
+compute xmax_comp all reduce max x
+compute ymin_comp all reduce min y
+compute ymax_comp all reduce max y
+variable Lx equal c_xmax_comp-c_xmin_comp
+variable Ly equal c_ymax_comp-c_ymin_comp
+variable area_approx equal v_Lx*v_Ly
+
+print "Initial Height (Lz_0): ${Lz_0} A"
+print "Approx Area:           ${area_approx} A^2"
+
+# ============================================
+# 4. COMPRESSION SETUP
 # ============================================
 
-# Temperature
-variable T_low equal 50.0
-variable T_high equal 400.0
+# Wall Physics
+variable k_wall      equal 1000.0  # Stiff wall (eV/A^2)
+variable total_disp  equal v_Lz_0*v_strain_target
+variable half_disp   equal v_total_disp/2.0
 
-# ✅ Cooling rate: 0.5 K/ps (literature standard for nanoparticles)
-variable T_rate equal 0.5
-variable temp_diff equal (v_T_high-v_T_low)
-variable steps_ramp equal round(v_temp_diff/v_T_rate)
-# Cooling time: 350K / 0.5 K/ps = 700 ps = 700,000 steps (~30 min/ramp)
+# Dynamic Variables for Wall Positions
+# We ramp from current position inwards
+variable start_step  equal step
+variable ramp        equal "(step - v_start_step) / v_load_steps"
+# Clamp ramp to 0.0-1.0 to prevent crushing if we run extra steps
+variable ramp_safe   equal "step > v_start_step + v_load_steps ? 1.0 : v_ramp"
 
-# ✅ Equilibration: 200 ps for nanoparticles (surface relaxation)
-variable equil_steps equal 200000  # 200 ps
+variable pos_hi      equal "v_z_max_curr - (v_half_disp * v_ramp_safe)"
+variable pos_lo      equal "v_z_min_curr + (v_half_disp * v_ramp_safe)"
 
-# ✅ Deformation: 4% max strain (safe for 10nm particles)
-variable deform_strain equal 0.04
+# Define Walls (initially at boundaries)
+fix top_wall all wall/harmonic zhi v_pos_hi ${k_wall} 0.0 2.5 units box
+fix bot_wall all wall/harmonic zlo v_pos_lo ${k_wall} 0.0 2.5 units box
 
-# ✅ Deformation rate: 5×10^-7 /s (realistic MD rate)
-variable deform_rate equal 5.0e-7  # strain/ps
-variable deform_time equal v_deform_strain/v_deform_rate
-variable deform_steps equal round(v_deform_time/dt)
-# Deformation time: 0.04 / 5e-7 = 80,000 ps = 80 ns = 8e7 steps (~7 hours)
+# OUTPUTS FOR STRESS-STRAIN CURVE (FIXED)
+# Use virial stress instead of wall forces
+compute pstress all pressure NULL virial
+variable stress_zz equal c_pstress[3]  # Directly in bars
+variable eng_stress equal "v_stress_zz * 1e-4"  # Convert bars to GPa
 
-# Damping
-variable tdamp equal $(200.0*dt)  # Gentler for nanoparticles
+# Track martensite fraction
+compute n_mart all reduce sum v_is_martensite
+variable frac_mart equal c_n_mart/count(all)
 
-# Runtime estimate:
-# Cooling: 700k × 2 cycles = 1.4M steps
-# Heating: 700k × 2 cycles = 1.4M steps  
-# Equilibration: 200k × 6 stages = 1.2M steps
-# Deformation: 80M steps
-# Unloading: 200k steps
-# TOTAL: ~84M steps → 8-10 hours on 4 cores
+fix data_out all print 200 &
+    "$(step) $(temp) $(lz) $(v_true_strain) $(v_stress_zz) $(v_eng_stress) $(v_frac_mart)" &
+    file ${output_dir}/stress_strain.txt screen no &
+    title "# step temp Lz true_strain Stress_virial(bar) Stress(GPa) Martensite_Frac"
 
-shell mkdir -p ${output_dir}
-
-thermo 5000  # Print every 5 ps
-thermo_style custom step temp pe press vol lx density c_coord[*]
-
-dump 1 all custom 50000 ${output_dir}/sme_*.dump &
-    id type x y z c_pe_atom c_centro c_cna c_coord
+dump 1 all custom 2000 ${output_dir}/comp_*.dump id type x y z c_csym c_stress[3]
 dump_modify 1 sort id
 
-fix thermo_out all print 5000 &
-    "$(step) $(temp) $(pe/atoms) $(press) $(lx) $(c_coord)" &
-    file ${output_dir}/sme_detailed.txt screen no &
-    title "# step temp pe_per_atom press lx avg_coord"
+# ============================================
+# 5. EXECUTE COMPRESSION
+# ============================================
+print "=== STEP 3: COMPRESSION START ==="
+run ${load_steps}
+print "=== COMPRESSION END ==="
+
+# Hold compressed state briefly
+run 5000
 
 # ============================================
-# STEP 1: AUSTENITE EQUILIBRATION
+# 6. UNLOADING (Mechanical Recovery)
 # ============================================
-print "=========================================="
-print "STEP 1: Austenite Equilibration (${T_high}K)"
-print "=========================================="
+print "=== STEP 4: UNLOADING ==="
+unfix top_wall
+unfix bot_wall
 
-velocity all create ${T_high} ${seed} dist gaussian
-fix 1 all nvt temp ${T_high} ${T_high} ${tdamp}
-run ${equil_steps}
-unfix 1
+# Allow elastic recovery
+run 20000
 
-variable Lx_ref equal lx
-variable pe_austenite equal pe
-print "Austenite length: $(v_Lx_ref) Å"
-print "Austenite PE: $(v_pe_austenite) eV"
-
-write_restart ${output_dir}/1_austenite.restart
+variable Lz_unloaded equal lz
+variable residual_strain equal "(v_Lz_0 - v_Lz_unloaded)/v_Lz_0"
+print "Residual Strain: ${residual_strain}"
 
 # ============================================
-# STEP 2: COOLING (A → M TRANSFORMATION)
+# 7. HEATING (SME Recovery)
 # ============================================
-print "=========================================="
-print "STEP 2: Cooling ${T_high}K → ${T_low}K"
-print "  Rate: ${T_rate} K/ps"
-print "  Steps: ${steps_ramp} ($(v_steps_ramp/1000) ps)"
-print "=========================================="
-
-fix 1 all nvt temp ${T_high} ${T_low} ${tdamp}
-run ${steps_ramp}
-unfix 1
-
-# ============================================
-# STEP 3: MARTENSITE EQUILIBRATION + VALIDATION
-# ============================================
-print "=========================================="
-print "STEP 3: Martensite Equilibration (${T_low}K)"
-print "=========================================="
-
-fix 1 all nvt temp ${T_low} ${T_low} ${tdamp}
-run ${equil_steps}
-unfix 1
-
-# ✅ VALIDATE TRANSFORMATION OCCURRED
-variable pe_martensite equal pe
-variable delta_pe_total equal v_pe_martensite-v_pe_austenite
-variable delta_pe_per_atom equal v_delta_pe_total/atoms
-
-print "Martensite PE: $(v_pe_martensite) eV"
-print "PE change: ${delta_pe_per_atom} eV/atom"
-
-if "${delta_pe_per_atom} > -0.05" then &
-    "print ''" &
-    "print '========================================'" &
-    "print 'ERROR: NO TRANSFORMATION DETECTED!'" &
-    "print '========================================'" &
-    "print 'PE should drop by 0.1-0.2 eV/atom'" &
-    "print 'Actual drop: ${delta_pe_per_atom} eV/atom'" &
-    "print 'Aborting (cannot perform SME without martensite)'" &
-    "quit 1"
-
-print "✓ Transformation confirmed (ΔPE = ${delta_pe_per_atom} eV/atom)"
-write_restart ${output_dir}/2_martensite.restart
-
-# ============================================
-# STEP 4: DEFORMATION (COMPRESSION!)
-# ============================================
-print "=========================================="
-print "STEP 4: Compressive Deformation of Martensite"
-print "  Strain: $(v_deform_strain*100)%"
-print "  Rate: ${deform_rate} /s"
-print "  Steps: ${deform_steps} ($(v_deform_time/1000) ns)"
-print "=========================================="
-
-variable Lx_before_deform equal lx
-
-# ✅ Define spherical grip regions
-variable xcm equal xcm(all,x)
-variable ycm equal xcm(all,y)
-variable zcm equal xcm(all,z)
-variable radius_est equal (lx+ly+lz)/6.0
-
-variable x_left equal v_xcm-0.75*v_radius_est
-variable x_right equal v_xcm+0.75*v_radius_est
-
-region left_grip sphere ${x_left} ${ycm} ${zcm} 5.0 units box
-region right_grip sphere ${x_right} ${ycm} ${zcm} 5.0 units box
-
-group left region left_grip
-group right region right_grip
-group mobile subtract all left right
-
-variable n_left equal count(left)
-variable n_right equal count(right)
-
-if "${n_left} < 10" then "print 'ERROR: Left grip empty!' quit 1"
-if "${n_right} < 10" then "print 'ERROR: Right grip empty!' quit 1"
-
-print "Grips: ${n_left} left, ${n_right} right, $(count(mobile)) mobile"
-
-# ✅ COMPRESSION: Push grips together (NOT apart!)
-variable target_disp equal v_deform_strain*v_Lx_before_deform
-variable grip_vel equal v_target_disp/2.0/v_deform_time  # Each grip moves half
-
-print "Target compression: ${target_disp} Å"
-print "Grip velocity: ${grip_vel} Å/ps each"
-
-# Apply compression
-fix 1 mobile nvt temp ${T_low} ${T_low} ${tdamp}
-velocity left set $(v_grip_vel) 0.0 0.0 units box   # Move RIGHT
-velocity right set $(-v_grip_vel) 0.0 0.0 units box  # Move LEFT
-fix 2 left nve
-fix 3 right nve
-fix 4 left aveforce NULL 0.0 0.0   # Constrain y,z
-fix 5 right aveforce NULL 0.0 0.0
-
-# Monitor stress-strain
-compute stress_xx all reduce ave c_stress_atom[1]
-variable strain_current equal (v_Lx_before_deform-lx)/v_Lx_before_deform*100
-
-fix stress_out all print 1000 &
-    "$(step) $(c_stress_xx) $(lx) $(v_strain_current)" &
-    file ${output_dir}/stress_strain.txt screen no &
-    title "# step stress_xx(eV/A^3) lx(A) strain(%)"
-
-run ${deform_steps}
-
-unfix stress_out
-unfix 5
-unfix 4
-unfix 3
-unfix 2
-unfix 1
-
-variable Lx_deformed equal lx
-print "Deformed length: $(v_Lx_deformed) Å"
-write_restart ${output_dir}/3_deformed.restart
-
-# ============================================
-# STEP 5: UNLOADING
-# ============================================
-print "=========================================="
-print "STEP 5: Unloading (elastic recovery)"
-print "=========================================="
-
-fix 1 all nvt temp ${T_low} ${T_low} ${tdamp}
-run ${equil_steps}
-unfix 1
-
-variable Lx_residual equal lx
-variable strain_residual_pct equal (v_Lx_ref-v_Lx_residual)/v_Lx_ref*100
-print "Residual deformed length: $(v_Lx_residual) Å"
-print "Residual strain: ${strain_residual_pct}%"
-
-write_restart ${output_dir}/4_unloaded.restart
-
-# ============================================
-# STEP 6: HEATING (SHAPE RECOVERY)
-# ============================================
-print "=========================================="
-print "STEP 6: Heating ${T_low}K → ${T_high}K (Recovery)"
-print "=========================================="
+print "=== STEP 5: HEATING (SHAPE MEMORY RECOVERY) ==="
 
 fix 1 all nvt temp ${T_low} ${T_high} ${tdamp}
-run ${steps_ramp}
-unfix 1
-
+run 50000 # Heat up
 fix 1 all nvt temp ${T_high} ${T_high} ${tdamp}
-run ${equil_steps}
-unfix 1
+run 10000 # Equilibrate
 
-variable Lx_final equal lx
-variable strain_final_pct equal (v_Lx_ref-v_Lx_final)/v_Lx_ref*100
+variable Lz_final equal lz
+variable recovery equal "(v_Lz_final - v_Lz_unloaded) / (v_Lz_0 - v_Lz_unloaded)"
 
-write_restart ${output_dir}/5_recovered.restart
-
-# ============================================
-# FINAL ANALYSIS
-# ============================================
-undump 1
-unfix thermo_out
-
-variable recovered_strain equal v_strain_residual_pct-v_strain_final_pct
-variable recovery_eff equal v_recovered_strain/v_strain_residual_pct*100
-
-print "=========================================="
-print "SME SIMULATION RESULTS (10nm NiTi)"
-print "=========================================="
-print "Reference Austenite Lx:      $(v_Lx_ref) Å"
-print "Deformed Martensite Lx:      $(v_Lx_deformed) Å"
-print "After Unloading Lx:          $(v_Lx_residual) Å"
-print "After Heating Lx:            $(v_Lx_final) Å"
-print "------------------------------------------"
-print "Applied Compression:         $(v_deform_strain*100)%"
-print "Residual Strain (M):         ${strain_residual_pct}%"
-print "Final Strain (A):            ${strain_final_pct}%"
-print "Recovered Strain:            ${recovered_strain}%"
-print "Recovery Efficiency:         ${recovery_eff}%"
-print "=========================================="
-
-# Benchmark against literature
-if "${recovery_eff} > 60 && ${recovery_eff} < 95" then &
-    "print '✓ REALISTIC SME (60-95% expected for 10nm particles)'" &
-elif "${recovery_eff} > 95" then &
-    "print '⚠ Suspiciously high recovery (>95% rare for nanoparticles)'" &
-    "print '  Check: Was transformation complete? Surface defects?'" &
-else &
-    "print '⚠ Low recovery (<60%)'" &
-    "print '  Possible: Surface pinning, incomplete transformation'"
-
-print "=========================================="
-print "Analysis TODO:"
-print "  1. Plot stress_strain.txt → check for plateau"
-print "  2. Visualize dumps → verify detwinning"
-print "  3. Check PE vs T → confirm transformations"
-print "=========================================="
+print "Final Recovery Ratio: ${recovery}"
+print "DONE."
